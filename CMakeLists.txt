@@ -1,10 +1,10 @@
 set(component_srcs 
     "src/net_logging.c" 
-    "src/udp_client.c" 
+    # "src/udp_client.c" 
     "src/multicast_log_sender.c"
-    "src/tcp_client.c" 
-    "src/mqtt_pub.c" 
-    "src/http_client.c"
+    # "src/tcp_client.c" 
+    # "src/mqtt_pub.c" 
+    # "src/http_client.c"
     "src/sse_server.c"
 )
 

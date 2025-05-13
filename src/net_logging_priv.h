@@ -2,30 +2,33 @@
 #define NET_LOGGING_PRIV_H_
 
 #include "net_logging.h"
+#include "esp_log.h"
+#include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h" // for TaskHandle_t
+#include "freertos/event_groups.h"
+
+#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#include "freertos/ringbuf.h"
+#else
+#include "freertos/message_buffer.h"
+#endif
 
 
-// The total number of bytes (not messages) the message buffer will be able to hold at any one time.
-#define xBufferSizeBytes (CONFIG_NET_LOGGING_BUFFER_SIZE) // set this in menuconfig
-
-// The size, in bytes, required to hold each item in the message,
-#define xItemSize (CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH) // set this in menuconfig
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct {
-	uint16_t port;
-	char ipv4[20]; // xxx.xxx.xxx.xxx
-	char url[64]; // mqtt://iot.eclipse.org
-	char topic[64];
-	TaskHandle_t taskHandle;
-} PARAMETER_t;
-
+// Don't use ESP_LOGx in this module, as it will call logging_vprintf again, causing a infinite recursion and stack overflow.
+// ESP_EARLY_LOGx macros are used instead.
+#define NETLOGGING_LOGE(fmt, args...) ESP_EARLY_LOGE(TAG, fmt, ##args)
+#define NETLOGGING_LOGW(fmt, args...) ESP_EARLY_LOGW(TAG, fmt, ##args)
+#define NETLOGGING_LOGI(fmt, args...) ESP_EARLY_LOGI(TAG, fmt, ##args)
+#define NETLOGGING_LOGD(fmt, args...) ESP_EARLY_LOGD(TAG, fmt, ##args)
+#define NETLOGGING_LOGV(fmt, args...) ESP_EARLY_LOGV(TAG, fmt, ##args)
 
 #ifdef __cplusplus
 }

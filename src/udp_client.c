@@ -1,11 +1,11 @@
 /*
-	UDP Client
+    UDP Client
 
-	This example code is in the Public Domain (or CC0 licensed, at your option.)
+    This example code is in the Public Domain (or CC0 licensed, at your option.)
 
-	Unless required by applicable law or agreed to in writing, this
-	software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-	CONDITIONS OF ANY KIND, either express or implied.
+    Unless required by applicable law or agreed to in writing, this
+    software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+    CONDITIONS OF ANY KIND, either express or implied.
 */
 
 #include <stdio.h>
@@ -21,72 +21,71 @@
 #include "esp_log.h"
 #include "lwip/sockets.h"
 
-#include "net_logging_priv.h"
-
 #if CONFIG_NET_LOGGING_USE_RINGBUFFER
-extern RingbufHandle_t xRingBufferUDP;
+RingbufHandle_t xRingBufferUDP = NULL;
 #else
-extern MessageBufferHandle_t xMessageBufferUDP;
+MessageBufferHandle_t xMessageBufferUDP = NULL;
 #endif
 
 void udp_dump(char *id, char *data, int len)
 {
-  int i;
-  printf("[%s]\n",id);
-  for(i=0;i<len;i++) {
-    printf("%0x ",data[i]);
-    if ( (i % 10) == 9) printf("\n");
-  }
-  printf("\n");
+    int i;
+    printf("[%s]\n", id);
+    for (i = 0;i < len;i++) {
+        printf("%0x ", data[i]);
+        if ((i % 10) == 9) printf("\n");
+    }
+    printf("\n");
 }
 
 // UDP Client Task
 void udp_client(void *pvParameters) {
-	PARAMETER_t *task_parameter = pvParameters;
-	PARAMETER_t param;
-	memcpy((char *)&param, task_parameter, sizeof(PARAMETER_t));
-	//printf("Start:param.port=%d param.ipv4=[%s]\n", param.port, param.ipv4);
+    PARAMETER_t *task_parameter = pvParameters;
+    PARAMETER_t param;
+    memcpy((char *)&param, task_parameter, sizeof(PARAMETER_t));
+    //printf("Start:param.port=%d param.ipv4=[%s]\n", param.port, param.ipv4);
 
-	struct sockaddr_in addr;
-	memset(&addr, 0, sizeof(addr));
-	addr.sin_family = AF_INET;
-	addr.sin_port = htons(param.port);
-	//addr.sin_addr.s_addr = htonl(INADDR_BROADCAST); /* send message to 255.255.255.255 */
-	//addr.sin_addr.s_addr = inet_addr("255.255.255.255"); /* send message to 255.255.255.255 */
-	addr.sin_addr.s_addr = inet_addr(param.ipv4);
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(param.port);
+    //addr.sin_addr.s_addr = htonl(INADDR_BROADCAST); /* send message to 255.255.255.255 */
+    //addr.sin_addr.s_addr = inet_addr("255.255.255.255"); /* send message to 255.255.255.255 */
+    addr.sin_addr.s_addr = inet_addr(param.ipv4);
 
-	/* create the socket */
-	int fd;
-	int ret;
-	fd = lwip_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP ); // Create a UDP socket.
-	LWIP_ASSERT("fd >= 0", fd >= 0);
+    /* create the socket */
+    int fd;
+    int ret;
+    fd = lwip_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // Create a UDP socket.
+    LWIP_ASSERT("fd >= 0", fd >= 0);
 
-	// Send ready to receive notify
-	xTaskNotifyGive(param.taskHandle);
+    // Send ready to receive notify
+    xTaskNotifyGive(param.taskHandle);
 
-	while(1) {
+    while (1) {
 #if CONFIG_NET_LOGGING_USE_RINGBUFFER
-		size_t received;
-		char *buffer = (char *)xRingbufferReceive(xRingBufferUDP, &received, portMAX_DELAY);
-		//printf("xRingBufferReceive received=%d\n", received);
+        size_t received;
+        char *buffer = (char *)xRingbufferReceive(xRingBufferUDP, &received, portMAX_DELAY);
+        //printf("xRingBufferReceive received=%d\n", received);
 #else
-		char buffer[xItemSize];
-		size_t received = xMessageBufferReceive(xMessageBufferUDP, buffer, sizeof(buffer), portMAX_DELAY);
-		//printf("xMessageBufferReceive received=%d\n", received);
+        char buffer[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH];
+        size_t received = xMessageBufferReceive(xMessageBufferUDP, buffer, sizeof(buffer), portMAX_DELAY);
+        //printf("xMessageBufferReceive received=%d\n", received);
 #endif
-		if (received > 0) {
-			//printf("xMessageBufferReceive buffer=[%.*s]\n",received, buffer);
-			//udp_dump("buffer", buffer, received);
-			ret = lwip_sendto(fd, buffer, received, 0, (struct sockaddr *)&addr, sizeof(addr));
-			LWIP_ASSERT("ret == received", ret == received);
+        if (received > 0) {
+            //printf("xMessageBufferReceive buffer=[%.*s]\n",received, buffer);
+            //udp_dump("buffer", buffer, received);
+            ret = lwip_sendto(fd, buffer, received, 0, (struct sockaddr *)&addr, sizeof(addr));
+            LWIP_ASSERT("ret == received", ret == received);
 #if CONFIG_NET_LOGGING_USE_RINGBUFFER
-			vRingbufferReturnItem(xRingBufferUDP, (void *)buffer);
+            vRingbufferReturnItem(xRingBufferUDP, (void *)buffer);
 #endif
-		} else {
-			printf("xMessageBufferReceive fail\n");
-			break;
-		}
-	} // end while
+        }
+        else {
+            printf("xMessageBufferReceive fail\n");
+            break;
+        }
+    } // end while
 
 /*
 buffer included escape code
@@ -122,10 +121,47 @@ buffer NOT included escape code
 69 7a 65 3a 36 34
 */
 
-	// Close socket
-	ret = lwip_close(fd);
-	LWIP_ASSERT("ret == 0", ret == 0);
-	vTaskDelete( NULL );
+// Close socket
+    ret = lwip_close(fd);
+    LWIP_ASSERT("ret == 0", ret == 0);
+    vTaskDelete(NULL);
 
 }
 
+esp_err_t udp_logging_init(const char *ipaddr, unsigned long port) {
+
+#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+    printf("start udp logging(xRingBuffer): ipaddr=[%s] port=%ld\n", ipaddr, port);
+    // Create RineBuffer
+    xRingBufferUDP = xRingbufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
+    configASSERT(xRingBufferUDP);
+#else
+    printf("start udp logging(xMessageBuffer): ipaddr=[%s] port=%ld\n", ipaddr, port);
+    // Create MessageBuffer
+    xMessageBufferUDP = xMessageBufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE);
+    configASSERT(xMessageBufferUDP);
+#endif
+
+    // Start UDP task
+    PARAMETER_t param;
+    param.port = port;
+    strcpy(param.ipv4, ipaddr);
+    param.taskHandle = xTaskGetCurrentTaskHandle();
+    xTaskCreate(udp_client, "UDP", 1024 * 6, (void *)&param, 2, NULL);
+
+    // Wait for ready to receive notify
+    uint32_t value = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+    printf("udp ulTaskNotifyTake=%"PRIi32"\n", value);
+    if (value == 0) {
+        printf("stop udp logging\n");
+#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+        vRingbufferDelete(xRingBufferUDP);
+        xRingBufferUDP = NULL;
+#else
+        vMessageBufferDelete(xMessageBufferUDP);
+        xMessageBufferUDP = NULL;
+#endif
+    }
+
+    return ESP_OK;
+}

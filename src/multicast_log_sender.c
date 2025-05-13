@@ -8,19 +8,8 @@
     CONDITIONS OF ANY KIND, either express or implied.
 */
 
-#include <stdio.h>
-#include <inttypes.h>
-#include <string.h>
-#include "freertos/FreeRTOS.h"
-
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
-#include "freertos/ringbuf.h"
-#else
-#include "freertos/message_buffer.h"
-#endif
 
 #include "esp_system.h"
-#include "esp_log.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h" // for inet_addr_from_ip4addr
 #include "lwip/netdb.h" // for getaddrinfo
@@ -30,14 +19,18 @@
 #define MULTICAST_TTL (1) // 1=don't leave the subnet
 #define USE_DEFAULT_IF (1) // 1=bind to default interface, 0=bind to specific interface
 #define RETRY_TIMEOUT_MS (3000) // retry timeout in ms
+#define STOPPED_BIT (1UL << 0) // bit to signal that task has stopped
+#define STOP_WAITTIME (8000 / portTICK_PERIOD_MS) // wait this long for task to stop
 
-#define TAG "multicast_log_sender: "
+#define TAG "multicast_log_sender"
 
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
-extern RingbufHandle_t xRingBufferMulticast;
-#else
-extern MessageBufferHandle_t xMessageBufferMulticast;
-#endif
+struct handle_s
+{
+    multicast_logging_param_t param;
+    volatile bool task_run;
+    EventGroupHandle_t *state_event;      /*!< Task's state event group */
+};
+static struct handle_s *handle = NULL;
 
 static int create_multicast_ipv4_socket(struct in_addr bind_iaddr, uint16_t port)
 {
@@ -48,7 +41,7 @@ static int create_multicast_ipv4_socket(struct in_addr bind_iaddr, uint16_t port
     sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (sock < 0)
     {
-        printf(TAG  "Failed to create socket. Error %d", errno);
+        NETLOGGING_LOGE("Failed to create socket. Error %d", errno);
         return -1;
     }
     // enable SO_REUSEADDR so servers restarted on the same ip addresses
@@ -56,7 +49,7 @@ static int create_multicast_ipv4_socket(struct in_addr bind_iaddr, uint16_t port
     int enable = 1;
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
     {
-        printf(TAG  "setsockopt(SO_REUSEADDR) failed");
+        NETLOGGING_LOGE("setsockopt(SO_REUSEADDR) failed");
     }
 
     // Configure source interface (bind to interface)
@@ -66,11 +59,11 @@ static int create_multicast_ipv4_socket(struct in_addr bind_iaddr, uint16_t port
     saddr.sin_port = htons(port);
 
     inet_ntoa_r(saddr.sin_addr.s_addr, addrbuf, sizeof(addrbuf) - 1);
-    ESP_LOGI(TAG, "Binding to interface %s...", addrbuf);
+    NETLOGGING_LOGI("Binding to interface %s...", addrbuf);
     err = bind(sock, (struct sockaddr *)&saddr, sizeof(struct sockaddr_in));
     if (err < 0)
     {
-        printf(TAG  "Failed to bind socket. Error %d", errno);
+        NETLOGGING_LOGE("Failed to bind socket. Error %d", errno);
         goto err;
     }
 
@@ -79,7 +72,7 @@ static int create_multicast_ipv4_socket(struct in_addr bind_iaddr, uint16_t port
     setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(uint8_t));
     if (err < 0)
     {
-        printf(TAG  "Failed to set IP_MULTICAST_TTL. Error %d", errno);
+        NETLOGGING_LOGE("Failed to set IP_MULTICAST_TTL. Error %d", errno);
         goto err;
     }
 
@@ -91,13 +84,13 @@ err:
     return -1;
 }
 
-static int multicast_setup(int *sock_out, struct addrinfo **res_out, struct in_addr src_addr, const char* mcast_addr, uint16_t port)
+static int multicast_setup(int *sock_out, struct addrinfo **res_out, struct in_addr src_addr, const char *mcast_addr, uint16_t port)
 {
     int err = 0;
     int sock = create_multicast_ipv4_socket(src_addr, port);
     if (sock < 0)
     {
-        printf(TAG  "Failed to create socket. Error %d", errno);
+        NETLOGGING_LOGE("Failed to create socket. Error %d", errno);
         return -1;
     }
 
@@ -110,7 +103,7 @@ static int multicast_setup(int *sock_out, struct addrinfo **res_out, struct in_a
 
     err = getaddrinfo(mcast_addr, NULL, &hints, &res);
     if (0 != err) {
-        ESP_LOGE(TAG, "Failed getaddrinfo");
+        NETLOGGING_LOGE("Failed getaddrinfo");
         return -1;
     }
 
@@ -121,10 +114,33 @@ static int multicast_setup(int *sock_out, struct addrinfo **res_out, struct in_a
 }
 
 // UDP Multicast Log Sender Task
-void multicast_log_sender(void *pvParameters) {
-    PARAMETER_t *param = pvParameters;
+static void multicast_log_sender(void *pvParameters)
+{
+    NETLOGGING_LOGI("start multicast logging: ipaddr=[%s] port=%ld", handle->param.ipv4addr, handle->param.port);
 
-    while (1) // Outer while loop to create socket
+#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+    // Create RingBuffer
+    RingbufHandle_t xRingBuffer = xRingbufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
+    if (NULL == xRingBuffer) {
+        NETLOGGING_LOGE("xRingBufferCreate failed");
+        goto _init_failed;
+    }
+    esp_err_t err = netlogging_register_recieveBuffer(xRingBuffer);
+#else
+    // Create MessageBuffer
+    MessageBufferHandle_t xMessageBuffer = xMessageBufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE);
+    if (NULL == xMessageBuffer) {
+        NETLOGGING_LOGE("xMessageBufferCreate failed");
+        goto _init_failed;
+    }
+    esp_err_t err = netlogging_register_recieveBuffer(xMessageBuffer);
+#endif
+    if (err != ESP_OK) {
+        NETLOGGING_LOGE("netlogging_register_recieveBuffer failed");
+        goto _init_failed;
+    }
+
+    while (handle->task_run) // Outer while loop to create socket
     {
         // Configure source interface
         struct in_addr src_addr = {0};
@@ -139,60 +155,148 @@ void multicast_log_sender(void *pvParameters) {
         /* create the socket */
         int sock = -1;
         struct addrinfo *res_toFree = NULL;
-        if (0 != multicast_setup(&sock, &res_toFree, src_addr, param->ipv4 ,param->port))
+        if (0 != multicast_setup(&sock, &res_toFree, src_addr, handle->param.ipv4addr, handle->param.port))
         {
-            printf(TAG "Failed to setup");
+            NETLOGGING_LOGE("Failed to setup");
             // wait and then try again
             vTaskDelay(RETRY_TIMEOUT_MS / portTICK_PERIOD_MS);
             continue;
         }
 
-        while (1)  // Inner while loop to send data
+        while (handle->task_run)  // Inner while loop to send data
         {
 #if CONFIG_NET_LOGGING_USE_RINGBUFFER
             size_t received;
-            char *buffer = (char *)xRingbufferReceive(xRingBufferMulticast, &received, portMAX_DELAY);
-            //printf("xRingBufferReceive received=%d\n", received);
+            char *buffer = (char *)xRingbufferReceive(xRingBuffer, &received, portMAX_DELAY);
+            //NETLOGGING_LOGI("xRingBufferReceive received=%d", received);
 #else
-            char buffer[xItemSize];
-            size_t received = xMessageBufferReceive(xMessageBufferMulticast, buffer, sizeof(buffer), portMAX_DELAY);
-            //printf("xMessageBufferReceive received=%d\n", received);
+            char buffer[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH];
+            size_t received = xMessageBufferReceive(xMessageBuffer, buffer, sizeof(buffer), portMAX_DELAY);
+            //NETLOGGING_LOGI("xMessageBufferReceive received=%d", received);
 #endif
             if (received > 0) {
-                //printf("xMessageBufferReceive buffer=[%.*s]\n",received, buffer);
+                //NETLOGGING_LOGI("xMessageBufferReceive buffer=[%.*s]",received, buffer);
                 int sendto_ret = sendto(sock, buffer, received, 0, res_toFree->ai_addr, res_toFree->ai_addrlen);
                 if (sendto_ret < 0)
                 {
-                    printf(TAG "sendto failed. errno: %d\n", errno);
+                    NETLOGGING_LOGE("sendto failed. errno: %d", errno);
                     // wait and then try again
                     vTaskDelay(RETRY_TIMEOUT_MS / portTICK_PERIOD_MS);
                     break; // break out of the inner while loop, back to the outer while loop to try to create the socket again
                 }
 
 #if CONFIG_NET_LOGGING_USE_RINGBUFFER
-                vRingbufferReturnItem(xRingBufferMulticast, (void *)buffer);
+                vRingbufferReturnItem(xRingBuffer, (void *)buffer);
 #endif
             }
             else {
-                printf(TAG "BufferReceive fail\n");
+                NETLOGGING_LOGE("BufferReceive fail");
                 // wait and then try again
                 vTaskDelay(RETRY_TIMEOUT_MS / portTICK_PERIOD_MS);
                 break; // break out of the inner while loop, back to the outer while loop to try to create the socket again
             }
         } // end inner while
 
-        printf(TAG "close socket and restart...\n");
+        NETLOGGING_LOGI("close socket and restart...");
         freeaddrinfo(res_toFree); // free the addrinfo struct
-        shutdown(sock, 0);
-        // Close socket
-        close(sock);
+        if (sock != -1) {
+            shutdown(sock, 0);
+            close(sock);
+        }
     } // end outer while
 
-    // Cleanup (should never reach here)
-    if (param != NULL) {
-        free(param);
-        param = NULL;
+_init_failed:
+    // Cleanup. Task is only responsible for freeing memory that it allocated.
+#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+    netlogging_unregister_recieveBuffer(xRingBuffer);
+    if (xRingBuffer != NULL) {
+        vRingbufferDelete(xRingBuffer);
+        xRingBuffer = NULL;
     }
+#else   
+    netlogging_unregister_recieveBuffer(xMessageBuffer);
+    if (xMessageBuffer != NULL) {
+        vMessageBufferDelete(xMessageBuffer);
+        xMessageBuffer = NULL;
+    }
+#endif
+    xEventGroupSetBits(handle->state_event, STOPPED_BIT);
+    NETLOGGING_LOGI("multicast_log_sender task stopped");
     vTaskDelete(NULL);
 }
 
+esp_err_t netlogging_multicast_sender_run(void)
+{
+    if (NULL == handle) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Start Multicast Sender task
+    handle->task_run = true;
+    return xTaskCreate(multicast_log_sender, "MCAST", 1024 * 6, NULL, 2, NULL);
+}
+
+esp_err_t netlogging_multicast_sender_wait_for_stop(void)
+{
+    if (NULL == handle) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    EventBits_t uxBits = xEventGroupWaitBits(handle->state_event, STOPPED_BIT, false, true, STOP_WAITTIME);
+    esp_err_t ret = ESP_ERR_TIMEOUT;
+    if (uxBits & STOPPED_BIT)
+    {
+        ret = ESP_OK;
+    }
+    return ret;
+}
+
+esp_err_t netlogging_multicast_sender_stop(void)
+{
+    if (NULL == handle) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    /* Tell task to stop and delete itself */
+    handle->task_run = false;
+    esp_err_t ret = netlogging_multicast_sender_wait_for_stop();
+    return ret;
+}
+
+esp_err_t netlogging_multicast_sender_init(const multicast_logging_param_t *param)
+{
+    NETLOGGING_LOGI("start multicast logging: ipaddr=[%s] port=%ld", param->ipv4addr, param->port);
+
+    // Allocate memory for the handle
+    handle = malloc(sizeof(struct handle_s));
+    if (handle == NULL) {
+        NETLOGGING_LOGE("malloc fail");
+        return ESP_ERR_NO_MEM;
+    }
+    memset(handle, 0, sizeof(struct handle_s));
+    handle->param = *param;
+    handle->state_event = xEventGroupCreate();
+    if (handle->state_event == NULL) {
+        NETLOGGING_LOGE("xEventGroupCreate failed");
+        goto _init_failed;
+    }
+    return ESP_OK;
+
+_init_failed:
+    netlogging_multicast_sender_deinit();
+    return ESP_ERR_NO_MEM;
+}
+
+esp_err_t netlogging_multicast_sender_deinit(void)
+{
+    if (handle)
+    {
+        if (handle->state_event)
+        {
+            vEventGroupDelete(handle->state_event);
+        }
+
+        free(handle);
+        handle = NULL;
+        return ESP_OK;
+    }
+    return ESP_FAIL;
+}

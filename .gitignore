@@ -5,3 +5,5 @@ __pycache__/
 sdkconfig
 sdkconfig.old
 dependencies.lock
+*.log
+*.log.*
