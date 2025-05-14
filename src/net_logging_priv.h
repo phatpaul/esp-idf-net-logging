@@ -16,11 +16,7 @@
 #include "freertos/message_buffer.h"
 #endif
 
-
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+EXTERN_C_BEGIN
 
 // Don't use ESP_LOGx in this module, as it will call logging_vprintf again, causing a infinite recursion and stack overflow.
 // ESP_EARLY_LOGx macros are used instead.
@@ -30,8 +26,6 @@ extern "C" {
 #define NETLOGGING_LOGD(fmt, args...) ESP_EARLY_LOGD(TAG, fmt, ##args)
 #define NETLOGGING_LOGV(fmt, args...) ESP_EARLY_LOGV(TAG, fmt, ##args)
 
-#ifdef __cplusplus
-}
-#endif
+EXTERN_C_END
 
 #endif /* NET_LOGGING_PRIV_H_ */

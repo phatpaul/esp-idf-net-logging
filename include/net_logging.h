@@ -4,15 +4,15 @@
 #include "esp_err.h"
 #include <stdbool.h>
 
-// The total number of bytes (not messages) the message buffer will be able to hold at any one time.
-// (CONFIG_NET_LOGGING_BUFFER_SIZE) // set this in menuconfig
-
-// The size, in bytes, required to hold each item in the message,
-// (CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH) // set this in menuconfig
-
 #ifdef __cplusplus
-extern "C" {
+#define EXTERN_C_BEGIN  extern "C" {
+#define EXTERN_C_END    }
+#else
+#define EXTERN_C_BEGIN
+#define EXTERN_C_END
 #endif
+
+EXTERN_C_BEGIN
 
 esp_err_t netlogging_init(bool enableStdout);
 esp_err_t netlogging_deinit(void);
@@ -29,6 +29,10 @@ typedef struct {
     char ipv4addr[16];
     unsigned long port;
 } multicast_logging_param_t;
+#define NETLOGGING_MULTICAST_DEFAULT_CONFIG() {  \
+    .ipv4addr = "239.2.1.2",\
+    .port = 2054,                    \
+}
 esp_err_t netlogging_multicast_sender_init(const multicast_logging_param_t *param);
 esp_err_t netlogging_multicast_sender_run(void);
 esp_err_t netlogging_multicast_sender_stop(void);
@@ -54,14 +58,13 @@ esp_err_t http_logging_init(const http_logging_param_t *param);
 typedef struct {
     unsigned long port;
 } sse_logging_param_t;
+#define NETLOGGING_SSE_DEFAULT_CONFIG() {  \
+    .port = 8080,                    \
+}
 esp_err_t netlogging_sse_server_init(const sse_logging_param_t *param);
 esp_err_t netlogging_sse_server_run(void);
 esp_err_t netlogging_sse_server_stop(void);
 esp_err_t netlogging_sse_server_deinit(void);
 
-
-#ifdef __cplusplus
-}
-#endif
-
+EXTERN_C_END
 #endif /* NET_LOGGING_H_ */

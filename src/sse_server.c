@@ -1,5 +1,5 @@
 /*
-SSE server
+Simple HTTP Server with SSE (Server-Sent Events) support
 
 This example code is in the Public Domain (or CC0 licensed, at your option.)
 
@@ -8,7 +8,7 @@ software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
 CONDITIONS OF ANY KIND, either express or implied.
 */
 
-#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE // set log level in this file only
+//#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE // set log level in this file only
 #include "esp_system.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h" // for inet_addr_from_ip4addr
@@ -16,295 +16,459 @@ CONDITIONS OF ANY KIND, either express or implied.
 #include "esp_netif.h"
 #include "net_logging_priv.h"
 
-#define USE_DEFAULT_IF (1) // 1=bind to default interface, 0=bind to specific interface
+
 #define RETRY_TIMEOUT_MS (3000) // retry timeout in ms
+#define KEEPALIVE_TIMEOUT_MS (10000) // keepalive timeout in ms
 #define STOPPED_BIT (1UL << 0) // bit to signal that task has stopped
 #define STOP_WAITTIME (8000 / portTICK_PERIOD_MS) // wait this long for task to stop
+#define MAX_CLIENTS (CONFIG_LWIP_MAX_SOCKETS - 3)
+#define INVALID_SOCK (-1) // Indicates that the file descriptor represents an invalid (uninitialized or closed) socket
+#define YIELD_TO_ALL_MS (50) // Time in ms to yield to all tasks when a non-blocking socket would block
 
 #define TAG "sse_log_sender"
 
 // File content buffer for sse.html
-extern const unsigned char sse_html_start[] asm("_binary_sse_html_start");
-extern const unsigned char sse_html_end[] asm("_binary_sse_html_end");
+extern const char sse_html_start[] asm("_binary_sse_html_start");
+extern const char sse_html_end[] asm("_binary_sse_html_end");
 
-#define STOP_SERVING_CLIENT	( 1 << 0 )
-#define STOPPED_SERVING_CLIENT	( 1 << 1 )
-
-struct handle_s
+struct client_handle_s
+{
+    int sock;
+    void *buffer;
+    TickType_t last_activity;
+};
+struct server_handle_s
 {
     sse_logging_param_t param;
+    struct client_handle_s client[MAX_CLIENTS];
     volatile bool task_run;
+    int start_count;
     EventGroupHandle_t *state_event;      /*!< Task's state event group */
 };
-static struct handle_s *handle = NULL;
+static struct server_handle_s *server = NULL;
 
-static void serve_client(void *pvParameters) 
+
+/**
+ * @brief Tries to receive data from specified sockets in a non-blocking way,
+ *        i.e. returns immediately if no data.
+ *
+ * @param[in] sock Socket for reception
+ * @param[out] data Data pointer to write the received data
+ * @param[in] max_len Maximum size of the allocated space for receiving data
+ * @return
+ *          >0 : Size of received data
+ *          =0 : No data available
+ *          -1 : Error occurred during socket read operation
+ *          -2 : Socket is not connected, to distinguish between an actual socket error and active disconnection
+ */
+static int try_receive(const int sock, char *data, size_t max_len)
 {
-    NETLOGGING_LOGI("enter serve_client");
-    void **params = (void **)pvParameters;
-    const int *client_sock_ptr = (int *)params[0];
-    int client_sock = *client_sock_ptr;
-    const EventGroupHandle_t *client_serving_task_events_ptr = (EventGroupHandle_t *)params[1];
-    EventGroupHandle_t client_serving_task_events = *client_serving_task_events_ptr;
-    const size_t sse_html_size = sse_html_end - sse_html_start;
-
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
-    // Create RingBuffer
-    RingbufHandle_t xRingBuffer = xRingbufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
-    if (NULL == xRingBuffer) {
-        NETLOGGING_LOGE("xRingBufferCreate failed");
-        goto _init_failed;
+    int len = recv(sock, data, max_len, 0);
+    if (len < 0) {
+        if (errno == EINPROGRESS || errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0;   // Not an error
+        }
+        if (errno == ENOTCONN) {
+            NETLOGGING_LOGD("[sock=%d]: Connection closed", sock);
+            return -2;  // Socket has been disconnected
+        }
+        NETLOGGING_LOGD("Error occurred during receiving. errno: %d", errno);
+        return -1;
     }
-    esp_err_t err = netlogging_register_recieveBuffer(xRingBuffer);
+
+    return len;
+}
+
+/**
+ * @brief Sends the specified data to the socket. This function blocks until all bytes got sent.
+ *
+ * @param[in] sock Socket to write data
+ * @param[in] data Data to be written
+ * @param[in] len Length of the data
+ * @return
+ *          >0 : Size the written data
+ *          -1 : Error occurred during socket write operation
+ */
+static int socket_send(const int sock, const char *data, const size_t len)
+{
+    int to_write = len;
+    while (to_write > 0) {
+        int written = send(sock, data + (len - to_write), to_write, 0);
+        if (written < 0 && errno != EINPROGRESS && errno != EAGAIN && errno != EWOULDBLOCK) {
+            NETLOGGING_LOGD("Error occurred during sending. errno: %d", errno);
+            return -1;
+        }
+        to_write -= written;
+    }
+    return len;
+}
+
+/**
+ * @brief Returns the string representation of client's address (accepted on this server)
+ */
+static inline char *get_clients_address(struct sockaddr_storage *source_addr)
+{
+    static char address_str[128];
+    char *res = NULL;
+    // Convert ip address to string
+    if (source_addr->ss_family == PF_INET) {
+        res = inet_ntoa_r(((struct sockaddr_in *)source_addr)->sin_addr, address_str, sizeof(address_str) - 1);
+    }
+#ifdef CONFIG_LWIP_IPV6
+    else if (source_addr->ss_family == PF_INET6) {
+        res = inet6_ntoa_r(((struct sockaddr_in6 *)source_addr)->sin6_addr, address_str, sizeof(address_str) - 1);
+    }
+#endif
+    if (!res) {
+        address_str[0] = '\0'; // Returns empty string if conversion didn't succeed
+    }
+    return address_str;
+}
+
+static void cleanup_client(struct client_handle_s *client)
+{
+    if (INVALID_SOCK != client->sock) {
+        close(client->sock);
+        client->sock = INVALID_SOCK;
+    }
+    if (NULL != client->buffer) {
+        netlogging_unregister_recieveBuffer(client->buffer);
+#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+        vRingbufferDelete(client->buffer);
 #else
-    // Create MessageBuffer
-    MessageBufferHandle_t xMessageBuffer = xMessageBufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE);
-    if (NULL == xMessageBuffer) {
-        NETLOGGING_LOGE("xMessageBufferCreate failed");
-        goto _init_failed;
-    }
-    esp_err_t err = netlogging_register_recieveBuffer(xMessageBuffer);
+        vMessageBufferDelete(client->buffer);
 #endif
-    if (err != ESP_OK) {
-        NETLOGGING_LOGE("netlogging_register_recieveBuffer failed");
-        goto _init_failed;
+        client->buffer = NULL;
     }
+}
 
-    // Receive HTTP request
-    char request[1024];
-    int req_len = recv(client_sock, request, sizeof(request) - 1, 0);
-    NETLOGGING_LOGI("request received: %.*s", req_len, request);
-    if (req_len <= 0) {
-        NETLOGGING_LOGE("Connection closed or error");
-        shutdown(client_sock, 0);
-        close(client_sock);
-        vTaskDelete(NULL);
-    }
+static int serve_client(struct client_handle_s *client)
+{
+    assert(client != NULL);
+    TickType_t now = xTaskGetTickCount();
+    // first time serving this client?
+    if (NULL == client->buffer)
+    {
+        // first time serving this client
+        NETLOGGING_LOGD("serve new client");
+        const size_t sse_html_size = sse_html_end - sse_html_start;
 
-    // Null-terminate received data
-    request[req_len] = 0;
+        // Receive HTTP request
+        char request[1024];
+        int req_len = try_receive(client->sock, request, sizeof(request) - 1);
+        if (0 == req_len) {
+            // No data available -> yield to other tasks
+            return 0;
+        }
+        if (req_len < 0) {
+            // Error occurred within this client's socket -> close and mark invalid
+            NETLOGGING_LOGD("try_receive() returned %d -> closing the socket", req_len);
+            return -1;
+        }
+        // Else got HTTP request
 
-    // Check if the request is for the root path (/)
-    if (strstr(request, "GET / HTTP") != NULL) {
-        // Prepare HTTP response
-        char headers[256];
-        snprintf(headers, sizeof(headers),
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/html\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: close\r\n"
-            "\r\n",
-            sse_html_size);
+        // Null-terminate received data
+        request[req_len] = 0;
 
-        // Send header
-        send(client_sock, headers, strlen(headers), 0);
+        // Check if the request is for the root path (/)
+        if (strstr(request, "GET / HTTP") != NULL) {
+            // Prepare HTTP response
+            char headers[256];
+            snprintf(headers, sizeof(headers),
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/html\r\n"
+                "Content-Length: %d\r\n"
+                "Connection: close\r\n"
+                "\r\n",
+                sse_html_size);
 
-        // Send file content
-        send(client_sock, sse_html_start, sse_html_size, 0);
-    }
-    // Check if the request is for the SSE endpoint
-    else if (strstr(request, "GET /log-events HTTP") != NULL) {
-        NETLOGGING_LOGI("SSE client connected");
-        // Send SSE headers
-        const char *headers = "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/event-stream\r\n"
-            "retry: 1000\r\n"
-            "Cache-Control: no-cache\r\n"
-            "Connection: keep-alive\r\n"
-            "Access-Control-Allow-Origin: *\r\n"
-            "\r\n";
+            // Send header
+            int sent_len = socket_send(client->sock, headers, strlen(headers));
+            if (sent_len < 0) {
+                NETLOGGING_LOGD("Error sending header: errno %d", errno);
+                return -1;
+            }
 
-        send(client_sock, headers, strlen(headers), 0);
-        NETLOGGING_LOGI("serving SSE");
+            // Send file content
+            sent_len = socket_send(client->sock, sse_html_start, sse_html_size);
+            if (sent_len < 0) {
+                NETLOGGING_LOGD("Error sending file content: errno %d", errno);
+                return -1;
+            }
 
-        // Keep connection open and send SSE events
-        while ((xEventGroupGetBits(client_serving_task_events) & STOP_SERVING_CLIENT) == 0) {
+        }
+        // Check if the request is for the SSE endpoint
+        else if (strstr(request, "GET /log-events HTTP") != NULL) {
+            NETLOGGING_LOGD("client connected");
+            // Send SSE headers
+            const char *headers = "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/event-stream\r\n"
+                "retry: 1000\r\n"
+                "Cache-Control: no-cache\r\n"
+                "Connection: keep-alive\r\n"
+                "Access-Control-Allow-Origin: *\r\n"
+                "\r\n";
+
+            socket_send(client->sock, headers, strlen(headers));
+
 #if CONFIG_NET_LOGGING_USE_RINGBUFFER
-            size_t received;
-            char *buffer = (char *)xRingbufferReceive(xRingBuffer, &received, pdMS_TO_TICKS(10));
+            // Create RingBuffer
+            client->buffer = xRingbufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
 #else
-            char buffer[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH];
-            size_t received = xMessageBufferReceive(xMessageBufferSSE, buffer, sizeof(buffer), pdMS_TO_TICKS(10));
+            // Create MessageBuffer
+            client->buffer = xMessageBufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE);
 #endif
-
-            if (received > 0) {
-                // Format the buffer content as an SSE event
-                char sse_event[512];
-                snprintf(sse_event, sizeof(sse_event), "event: log-line\ndata: %.*s\n\n", (int)received, buffer);
-
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
-                vRingbufferReturnItem(xRingBuffer, (void *)buffer);
-#endif
-
-                // Send the event
-                int ret = send(client_sock, sse_event, strlen(sse_event), 0);
-                if (ret < 0) {
-                    NETLOGGING_LOGE("Error sending SSE event: errno %d", errno);
-                    break;
-                }
+            if (NULL == client->buffer) {
+                NETLOGGING_LOGE("bufferCreate failed");
+                return -1;
+            }
+            esp_err_t err = netlogging_register_recieveBuffer(client->buffer);
+            if (err != ESP_OK) {
+                NETLOGGING_LOGE("netlogging_register_recieveBuffer failed");
+                return -1;
+            }
+            client->last_activity = now;
+        }
+        else {
+            // Not found response for other paths
+            const char *not_found = "HTTP/1.1 404 Not Found\r\n"
+                "Content-Type: text/plain\r\n"
+                "Content-Length: 9\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "Not Found";
+            int sent_len = socket_send(client->sock, not_found, strlen(not_found));
+            if (sent_len < 0) {
+                NETLOGGING_LOGD("Error sending 404: errno %d", errno);
+                return -1;
             }
         }
     }
     else {
-        // Not found response for other paths
-        const char *not_found = "HTTP/1.1 404 Not Found\r\n"
-            "Content-Type: text/plain\r\n"
-            "Content-Length: 9\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "Not Found";
-        send(client_sock, not_found, strlen(not_found), 0);
-    }
+           // Keep connection open and send SSE events
 
-    // Close connection
-    NETLOGGING_LOGI("closing connection");
-    shutdown(client_sock, 0);
-    close(client_sock);
-
-_init_failed:
 #if CONFIG_NET_LOGGING_USE_RINGBUFFER
-    netlogging_unregister_recieveBuffer(xRingBuffer);
-    if (xRingBuffer != NULL) {
-        vRingbufferDelete(xRingBuffer);
-        xRingBuffer = NULL;
-    }
-#else   
-    netlogging_unregister_recieveBuffer(xMessageBuffer);
-    if (xMessageBuffer != NULL) {
-        vMessageBufferDelete(xMessageBuffer);
-        xMessageBuffer = NULL;
-    }
+        size_t received;
+        char *buffer = (char *)xRingbufferReceive(client->buffer, &received, 0); // don't wait
+        if (NULL == buffer) {
+            received = 0; // no data available
+        }
+#else
+        char buffer[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH];
+        size_t received = xMessageBufferReceive(xMessageBufferSSE, buffer, sizeof(buffer), 0); // don't wait
 #endif
-    xEventGroupSetBits(client_serving_task_events, STOPPED_SERVING_CLIENT);
-    vTaskDelete(NULL);
+
+        if ((NULL != buffer) && (received > 0)) {
+            // Format the buffer content as an SSE event
+            char sse_event[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH + 64];
+            snprintf(sse_event, sizeof(sse_event), "event: log-line\ndata: %.*s\n\n", (int)received, buffer);
+
+#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+            vRingbufferReturnItem(client->buffer, (void *)buffer);
+#endif
+
+            // Send the event
+            int ret = socket_send(client->sock, sse_event, strlen(sse_event));
+            if (ret < 0) {
+                NETLOGGING_LOGD("Error sending SSE event: errno %d", errno);
+                return -1;
+            }
+        } else if (now > (client->last_activity + pdMS_TO_TICKS(KEEPALIVE_TIMEOUT_MS))) {
+            // No data available, send keep-alive event
+
+            char sse_event[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH + 64];
+            snprintf(sse_event, sizeof(sse_event), "event: keepalive\ndata: %"PRIu32"\n\n", now);
+
+            int ret = socket_send(client->sock, sse_event, strlen(sse_event));
+            if (ret < 0) {
+                NETLOGGING_LOGD("Error sending keep-alive: errno %d", errno);
+                return -1;
+            }
+        }
+    }
+    client->last_activity = now;
+    return 0;
 }
 
-static void sse_server(void *pvParameters)
+
+static void server_task(void *pvParameters)
 {
-
-    while (handle->task_run) // Outer while loop to create socket
+    NETLOGGING_LOGD("Starting HTTP Logging Server");
+    while (server->task_run) // Outer while loop to (re)start server
     {
-        NETLOGGING_LOGI("starting HTTP Server Sent Events logging");
-        int addr_family = AF_INET;
-        int ip_protocol = IPPROTO_IP;
-
-        // Create a server socket instead of a client one
-        struct sockaddr_in server_addr;
-        server_addr.sin_addr.s_addr = htonl(INADDR_ANY); // Listen on all interfaces
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(handle->param.port);
-
-        int server_sock = socket(addr_family, SOCK_STREAM, ip_protocol);
-        if (server_sock < 0) {
-            NETLOGGING_LOGE("Unable to create socket: errno %d", errno);
-            // wait and then try again
+        if (server->start_count > 0) {
             vTaskDelay(RETRY_TIMEOUT_MS / portTICK_PERIOD_MS);
-            continue;
+            NETLOGGING_LOGD("Restart HTTP Logging Server");
+        }
+        server->start_count++;
+
+        // Prepare a list to hold client's connection state, mark all of them as invalid, i.e. available
+        for (int i = 0; i < MAX_CLIENTS; ++i) {
+            server->client[i].sock = INVALID_SOCK;
+            server->client[i].buffer = NULL;
         }
 
-        // Set socket option to reuse address
-        int opt = 1;
-        setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        // Creating a listener socket for incoming connections
+#if CONFIG_LWIP_IPV6
+        int listen_sock = socket(PF_INET6, SOCK_STREAM, 0);
+#else
+        int listen_sock = socket(PF_INET, SOCK_STREAM, 0);
+#endif
+        if (listen_sock < 0) {
+            NETLOGGING_LOGE("Unable to create socket: errno %d", errno);
+            continue; // continue outer while loop to retry
+        }
+        NETLOGGING_LOGD("Listener socket created");
 
-        // Bind socket to address
-        int err =
-            bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+#if CONFIG_LWIP_IPV6
+        struct in6_addr inaddr_any = IN6ADDR_ANY_INIT;
+        struct sockaddr_in6 serv_addr = {
+            .sin6_family = PF_INET6,
+            .sin6_addr = inaddr_any,
+            .sin6_port = htons(server->param.port)
+        };
+#else
+        struct sockaddr_in serv_addr = {
+            .sin_family = PF_INET,
+            .sin_addr = {
+                .s_addr = htonl(INADDR_ANY)
+            },
+            .sin_port = htons(handle->param.port)
+        };
+#endif
+
+        // Marking the socket as non-blocking
+        int flags = fcntl(listen_sock, F_GETFL);
+        if (fcntl(listen_sock, F_SETFL, flags | O_NONBLOCK) == -1) {
+            NETLOGGING_LOGE("Unable to set socket non blocking");
+            continue; // continue outer while loop to retry
+        }
+
+        /* Enable SO_REUSEADDR to allow binding to the same
+         * address and port when restarting the server */
+        int opt = 1;
+        if (setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+            NETLOGGING_LOGW("error enabling SO_REUSEADDR %d", errno);
+            /* This will fail if CONFIG_LWIP_SO_REUSE is not enabled. But
+             * it does not affect the normal working of the HTTP Server */
+        }
+
+
+        // Binding socket to the given address
+        int err = bind(listen_sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
         if (err != 0) {
             NETLOGGING_LOGE("Socket unable to bind: errno %d", errno);
-            // wait and then try again
-            vTaskDelay(RETRY_TIMEOUT_MS / portTICK_PERIOD_MS);
-            continue;
+            continue; // continue outer while loop to retry
         }
 
         // Start listening
-        err = listen(server_sock, 5);
+        // Set queue (backlog) of pending connections to 5 (can be more)
+        err = listen(listen_sock, 5);
         if (err != 0) {
             NETLOGGING_LOGE("Error listening on socket: errno %d", errno);
-            // wait and then try again
-            vTaskDelay(RETRY_TIMEOUT_MS / portTICK_PERIOD_MS);
-            continue;
+            continue; // continue outer while loop to retry
         }
 
-        NETLOGGING_LOGI("SSE Server listening on port %d", handle->param.port);
+        NETLOGGING_LOGI("HTTP Logging Server listening on port %d", server->param.port);
 
-        // Main server loop
-        static EventGroupHandle_t client_serving_task_events;
-        StaticEventGroup_t client_serving_task_events_data;
-        client_serving_task_events = xEventGroupCreateStatic(&client_serving_task_events_data);
-        TaskHandle_t client_task = NULL;
-        static int client_sock;
-        while (handle->task_run) // Inner loop to accept clients
+
+        while (server->task_run) // Inner loop to accept clients
         {
-            struct sockaddr_in client_addr;
-            socklen_t client_addr_len = sizeof(client_addr);
-            client_sock = accept(server_sock, (struct sockaddr *)&client_addr, &client_addr_len);
-            if (client_sock < 0) {
-                NETLOGGING_LOGE("Unable to accept connection: errno %d", errno);
-                continue;
-            }
-            NETLOGGING_LOGI("Accepted connection from %s:%d",
-                inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+            struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
+            socklen_t addr_len = sizeof(source_addr);
 
-            // Stop serving the previous client, if any
-            if (client_task != NULL) {
-                xEventGroupSetBits(client_serving_task_events, STOP_SERVING_CLIENT);
-                NETLOGGING_LOGI("Waiting for client task to stop...");
-                xEventGroupWaitBits(
-                    client_serving_task_events,
-                    STOPPED_SERVING_CLIENT,
-                    pdTRUE,
-                    pdFALSE,
-                    portMAX_DELAY
-                );
-                client_task = NULL;
+            // Find a free socket
+            int new_client_index = 0;
+            for (new_client_index = 0; new_client_index < MAX_CLIENTS; ++new_client_index) {
+                if (server->client[new_client_index].sock == INVALID_SOCK) {
+                    break;
+                }
             }
 
-            // serve new client
-            xEventGroupClearBits(client_serving_task_events, STOP_SERVING_CLIENT | STOPPED_SERVING_CLIENT);
-            void *client_pvParams[] = {
-            (void *)&client_sock,
-            (void *)&client_serving_task_events
-            };
-            xTaskCreate(
-                serve_client,
-                "LOGS_SSE_SERVE_CLIENT",
-                1024 * 4,
-                (void *)client_pvParams,
-                2,
-                &client_task
-            );
+            // We accept a new connection only if we have a free socket
+            if (new_client_index < MAX_CLIENTS) {
+                // Try to accept a new connections
+                struct client_handle_s *client = &server->client[new_client_index];
+                client->sock = accept(listen_sock, (struct sockaddr *)&source_addr, &addr_len);
+
+                if (client->sock < 0) {
+                    if (errno == EWOULDBLOCK) { // The listener socket did not accepts any connection
+                        // continue to serve open connections and try to accept again upon the next iteration
+                        NETLOGGING_LOGV("No pending connections...");
+                    }
+                    else {
+                        NETLOGGING_LOGE("Error accepting connection: errno %d", errno);
+                        break; // break out of the inner while loop, back to the outer while loop to try to create the socket again
+                    }
+                }
+                else {
+                    // We have a new client connected -> print it's address
+                    NETLOGGING_LOGD("[sock=%d]: Connection accepted from IP:%s", client->sock, get_clients_address(&source_addr));
+
+                    // ...and set the client's socket non-blocking
+                    flags = fcntl(client->sock, F_GETFL);
+                    if (fcntl(client->sock, F_SETFL, flags | O_NONBLOCK) == -1) {
+                        NETLOGGING_LOGE("Unable to set socket non blocking: errno %d", errno);
+                        break; // break out of the inner while loop, back to the outer while loop to try to create the socket again
+                    }
+                    NETLOGGING_LOGV("[sock=%d]: Socket marked as non blocking", client->sock);
+                }
+            }
+
+            // We serve all the connected clients in this loop
+            for (int i = 0; i < MAX_CLIENTS; ++i) {
+                struct client_handle_s *client = &server->client[i];
+                if (client->sock != INVALID_SOCK) {
+                    if (serve_client(client) != 0)
+                    {
+                        // Error occurred while serving this client -> close and mark invalid
+                        NETLOGGING_LOGD("[sock=%d]: Error occurred while serving client -> closing the socket", client->sock);
+                        cleanup_client(client);
+                        continue; // continue to the next socket
+                    }
+                } // one client's socket
+            } // for all sockets
+
+            // Yield to other tasks
+            vTaskDelay(pdMS_TO_TICKS(YIELD_TO_ALL_MS));
+
         } // end inner while
 
-        NETLOGGING_LOGI("close socket and restart...");
-        if (server_sock != -1) {
-            shutdown(server_sock, 0);
-            close(server_sock);
+        NETLOGGING_LOGD("close and restart...");
+        // Close the listener socket
+        if (listen_sock != INVALID_SOCK) {
+            close(listen_sock);
+        }
+        // Make sure all client sockets are closed
+        for (int i = 0; i < MAX_CLIENTS; ++i) {
+            cleanup_client(&server->client[i]);
         }
     } // end outer while
 
     // Cleanup. Task is only responsible for freeing memory that it allocated.
-    xEventGroupSetBits(handle->state_event, STOPPED_BIT);
-    NETLOGGING_LOGI("multicast_log_sender task stopped");
+    xEventGroupSetBits(server->state_event, STOPPED_BIT);
+    NETLOGGING_LOGI("task stopped");
     vTaskDelete(NULL);
 }
 
 esp_err_t netlogging_sse_server_run(void)
 {
-    if (NULL == handle) {
+    if (NULL == server) {
         return ESP_ERR_INVALID_STATE;
     }
 
     // Start Multicast Sender task
-    handle->task_run = true;
-    return xTaskCreate(sse_server, "HTTP SSE", 1024 * 6, NULL, 2, NULL);
+    server->task_run = true;
+    server->start_count = 0;
+    return xTaskCreate(server_task, "HTTP SSE", 1024 * 6, NULL, 2, NULL);
 }
 
 esp_err_t netlogging_sse_server_wait_for_stop(void)
 {
-    if (NULL == handle) {
+    if (NULL == server) {
         return ESP_ERR_INVALID_STATE;
     }
-    EventBits_t uxBits = xEventGroupWaitBits(handle->state_event, STOPPED_BIT, false, true, STOP_WAITTIME);
+    EventBits_t uxBits = xEventGroupWaitBits(server->state_event, STOPPED_BIT, false, true, STOP_WAITTIME);
     esp_err_t ret = ESP_ERR_TIMEOUT;
     if (uxBits & STOPPED_BIT)
     {
@@ -315,29 +479,29 @@ esp_err_t netlogging_sse_server_wait_for_stop(void)
 
 esp_err_t netlogging_sse_server_stop(void)
 {
-    if (NULL == handle) {
+    if (NULL == server) {
         return ESP_ERR_INVALID_STATE;
     }
     /* Tell task to stop and delete itself */
-    handle->task_run = false;
+    server->task_run = false;
     esp_err_t ret = netlogging_sse_server_wait_for_stop();
     return ret;
 }
 
 esp_err_t netlogging_sse_server_init(const sse_logging_param_t *param)
 {
-    NETLOGGING_LOGI("start see logging: port=%ld", param->port);
+    NETLOGGING_LOGD("start see logging: port=%ld", param->port);
 
     // Allocate memory for the handle
-    handle = malloc(sizeof(struct handle_s));
-    if (handle == NULL) {
+    server = malloc(sizeof(struct server_handle_s));
+    if (server == NULL) {
         NETLOGGING_LOGE("malloc fail");
         return ESP_ERR_NO_MEM;
     }
-    memset(handle, 0, sizeof(struct handle_s));
-    handle->param = *param;
-    handle->state_event = xEventGroupCreate();
-    if (handle->state_event == NULL) {
+    memset(server, 0, sizeof(struct server_handle_s));
+    server->param = *param;
+    server->state_event = xEventGroupCreate();
+    if (server->state_event == NULL) {
         NETLOGGING_LOGE("xEventGroupCreate failed");
         goto _init_failed;
     }
@@ -350,15 +514,15 @@ _init_failed:
 
 esp_err_t netlogging_sse_server_deinit(void)
 {
-    if (handle)
+    if (server)
     {
-        if (handle->state_event)
+        if (server->state_event)
         {
-            vEventGroupDelete(handle->state_event);
+            vEventGroupDelete(server->state_event);
         }
 
-        free(handle);
-        handle = NULL;
+        free(server);
+        server = NULL;
         return ESP_OK;
     }
     return ESP_FAIL;

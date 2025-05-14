@@ -24,13 +24,13 @@
 
 #define TAG "multicast_log_sender"
 
-struct handle_s
+struct server_handle_s
 {
     multicast_logging_param_t param;
     volatile bool task_run;
     EventGroupHandle_t *state_event;      /*!< Task's state event group */
 };
-static struct handle_s *handle = NULL;
+static struct server_handle_s *server = NULL;
 
 static int create_multicast_ipv4_socket(struct in_addr bind_iaddr, uint16_t port)
 {
@@ -116,7 +116,7 @@ static int multicast_setup(int *sock_out, struct addrinfo **res_out, struct in_a
 // UDP Multicast Log Sender Task
 static void multicast_log_sender(void *pvParameters)
 {
-    NETLOGGING_LOGI("start multicast logging: ipaddr=[%s] port=%ld", handle->param.ipv4addr, handle->param.port);
+    NETLOGGING_LOGI("start multicast logging: ipaddr=[%s] port=%ld", server->param.ipv4addr, server->param.port);
 
 #if CONFIG_NET_LOGGING_USE_RINGBUFFER
     // Create RingBuffer
@@ -140,7 +140,7 @@ static void multicast_log_sender(void *pvParameters)
         goto _init_failed;
     }
 
-    while (handle->task_run) // Outer while loop to create socket
+    while (server->task_run) // Outer while loop to create socket
     {
         // Configure source interface
         struct in_addr src_addr = {0};
@@ -155,7 +155,7 @@ static void multicast_log_sender(void *pvParameters)
         /* create the socket */
         int sock = -1;
         struct addrinfo *res_toFree = NULL;
-        if (0 != multicast_setup(&sock, &res_toFree, src_addr, handle->param.ipv4addr, handle->param.port))
+        if (0 != multicast_setup(&sock, &res_toFree, src_addr, server->param.ipv4addr, server->param.port))
         {
             NETLOGGING_LOGE("Failed to setup");
             // wait and then try again
@@ -163,7 +163,7 @@ static void multicast_log_sender(void *pvParameters)
             continue;
         }
 
-        while (handle->task_run)  // Inner while loop to send data
+        while (server->task_run)  // Inner while loop to send data
         {
 #if CONFIG_NET_LOGGING_USE_RINGBUFFER
             size_t received;
@@ -213,35 +213,35 @@ _init_failed:
         vRingbufferDelete(xRingBuffer);
         xRingBuffer = NULL;
     }
-#else   
+#else
     netlogging_unregister_recieveBuffer(xMessageBuffer);
     if (xMessageBuffer != NULL) {
         vMessageBufferDelete(xMessageBuffer);
         xMessageBuffer = NULL;
     }
 #endif
-    xEventGroupSetBits(handle->state_event, STOPPED_BIT);
+    xEventGroupSetBits(server->state_event, STOPPED_BIT);
     NETLOGGING_LOGI("multicast_log_sender task stopped");
     vTaskDelete(NULL);
 }
 
 esp_err_t netlogging_multicast_sender_run(void)
 {
-    if (NULL == handle) {
+    if (NULL == server) {
         return ESP_ERR_INVALID_STATE;
     }
 
     // Start Multicast Sender task
-    handle->task_run = true;
+    server->task_run = true;
     return xTaskCreate(multicast_log_sender, "MCAST", 1024 * 6, NULL, 2, NULL);
 }
 
 esp_err_t netlogging_multicast_sender_wait_for_stop(void)
 {
-    if (NULL == handle) {
+    if (NULL == server) {
         return ESP_ERR_INVALID_STATE;
     }
-    EventBits_t uxBits = xEventGroupWaitBits(handle->state_event, STOPPED_BIT, false, true, STOP_WAITTIME);
+    EventBits_t uxBits = xEventGroupWaitBits(server->state_event, STOPPED_BIT, false, true, STOP_WAITTIME);
     esp_err_t ret = ESP_ERR_TIMEOUT;
     if (uxBits & STOPPED_BIT)
     {
@@ -252,11 +252,11 @@ esp_err_t netlogging_multicast_sender_wait_for_stop(void)
 
 esp_err_t netlogging_multicast_sender_stop(void)
 {
-    if (NULL == handle) {
+    if (NULL == server) {
         return ESP_ERR_INVALID_STATE;
     }
     /* Tell task to stop and delete itself */
-    handle->task_run = false;
+    server->task_run = false;
     esp_err_t ret = netlogging_multicast_sender_wait_for_stop();
     return ret;
 }
@@ -266,15 +266,15 @@ esp_err_t netlogging_multicast_sender_init(const multicast_logging_param_t *para
     NETLOGGING_LOGI("start multicast logging: ipaddr=[%s] port=%ld", param->ipv4addr, param->port);
 
     // Allocate memory for the handle
-    handle = malloc(sizeof(struct handle_s));
-    if (handle == NULL) {
+    server = malloc(sizeof(struct server_handle_s));
+    if (server == NULL) {
         NETLOGGING_LOGE("malloc fail");
         return ESP_ERR_NO_MEM;
     }
-    memset(handle, 0, sizeof(struct handle_s));
-    handle->param = *param;
-    handle->state_event = xEventGroupCreate();
-    if (handle->state_event == NULL) {
+    memset(server, 0, sizeof(struct server_handle_s));
+    server->param = *param;
+    server->state_event = xEventGroupCreate();
+    if (server->state_event == NULL) {
         NETLOGGING_LOGE("xEventGroupCreate failed");
         goto _init_failed;
     }
@@ -287,15 +287,15 @@ _init_failed:
 
 esp_err_t netlogging_multicast_sender_deinit(void)
 {
-    if (handle)
+    if (server)
     {
-        if (handle->state_event)
+        if (server->state_event)
         {
-            vEventGroupDelete(handle->state_event);
+            vEventGroupDelete(server->state_event);
         }
 
-        free(handle);
-        handle = NULL;
+        free(server);
+        server = NULL;
         return ESP_OK;
     }
     return ESP_FAIL;
