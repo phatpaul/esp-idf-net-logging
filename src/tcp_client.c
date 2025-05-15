@@ -12,7 +12,7 @@
 #include <inttypes.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
 #include "freertos/ringbuf.h"
 #else
 #include "freertos/message_buffer.h"
@@ -24,7 +24,7 @@
 
 #include "net_logging_priv.h"
 
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
 extern RingbufHandle_t xRingBufferTCP;
 #else
 extern MessageBufferHandle_t xMessageBufferTCP;
@@ -60,7 +60,7 @@ void tcp_client(void *pvParameters)
 		dest_addr.sin_addr.s_addr = ip4_addr->addr;
 		printf("dest_addr.sin_addr.s_addr=0x%"PRIx32"\n", dest_addr.sin_addr.s_addr);
 	}
-	
+
 
 	int sock = socket(addr_family, SOCK_STREAM, ip_protocol);
 	if (sock < 0) {
@@ -81,12 +81,12 @@ void tcp_client(void *pvParameters)
 	xTaskNotifyGive(param.taskHandle);
 
 	while (1) {
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
         size_t received;
         char *buffer = (char *)xRingbufferReceive(xRingBufferTCP, &received, portMAX_DELAY);
         //printf("xRingBufferReceive received=%d\n", received);
 #else
-		char buffer[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH];
+		char buffer[CONFIG_NETLOGGING_MESSAGE_MAX_LENGTH];
 		size_t received = xMessageBufferReceive(xMessageBufferTCP, buffer, sizeof(buffer), portMAX_DELAY);
 		//printf("xMessageBufferReceive received=%d\n", received);
 #endif
@@ -94,7 +94,7 @@ void tcp_client(void *pvParameters)
 			//printf("xMessageBufferReceive buffer=[%.*s]\n",received, buffer);
 			int ret = send(sock, buffer, received, 0);
 			LWIP_ASSERT("ret == received", ret == received);
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
             vRingbufferReturnItem(xRingBufferTCP, (void *)buffer);
 #endif
 		} else {
@@ -113,31 +113,31 @@ void tcp_client(void *pvParameters)
 
 esp_err_t tcp_logging_init(const char *ipaddr, unsigned long port) {
 
-    #if CONFIG_NET_LOGGING_USE_RINGBUFFER
+    #if CONFIG_NETLOGGING_USE_RINGBUFFER
         printf("start tcp logging(xRingBuffer): ipaddr=[%s] port=%ld\n", ipaddr, port);
         // Create RineBuffer
-        xRingBufferTCP = xRingbufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
+        xRingBufferTCP = xRingbufferCreate(CONFIG_NETLOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
         configASSERT( xRingBufferTCP );
     #else
         printf("start tcp logging(xMessageBuffer): ipaddr=[%s] port=%ld\n", ipaddr, port);
         // Create MessageBuffer
-        xMessageBufferTCP = xMessageBufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE);
+        xMessageBufferTCP = xMessageBufferCreate(CONFIG_NETLOGGING_BUFFER_SIZE);
         configASSERT( xMessageBufferTCP );
     #endif
-    
+
         // Start TCP task
         PARAMETER_t param;
         param.port = port;
         strcpy(param.ipv4, ipaddr);
         param.taskHandle = xTaskGetCurrentTaskHandle();
         xTaskCreate(tcp_client, "TCP", 1024*6, (void *)&param, 2, NULL);
-    
+
         // Wait for ready to receive notify
         uint32_t value = ulTaskNotifyTake( pdTRUE, pdMS_TO_TICKS(1000) );
         printf("tcp ulTaskNotifyTake=%"PRIi32"\n", value);
         if (value == 0) {
             printf("stop tcp logging\n");
-    #if CONFIG_NET_LOGGING_USE_RINGBUFFER
+    #if CONFIG_NETLOGGING_USE_RINGBUFFER
             vRingbufferDelete(xRingBufferTCP);
             xRingBufferTCP = NULL;
     #else

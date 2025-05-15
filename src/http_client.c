@@ -12,7 +12,7 @@ CONDITIONS OF ANY KIND, either express or implied.
 #include <inttypes.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
 #include "freertos/ringbuf.h"
 #else
 #include "freertos/message_buffer.h"
@@ -24,7 +24,7 @@ CONDITIONS OF ANY KIND, either express or implied.
 
 #include "net_logging_priv.h"
 
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
 extern RingbufHandle_t xRingBufferHTTP;
 #else
 extern MessageBufferHandle_t xMessageBufferHTTP;
@@ -184,12 +184,12 @@ void http_client(void *pvParameters)
     xTaskNotifyGive(param.taskHandle);
 
     while (1) {
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
         size_t received;
         char *buffer = (char *)xRingbufferReceive(xRingBufferHTTP, &received, portMAX_DELAY);
         //printf("xRingBufferReceive received=%d\n", received);
 #else
-        char buffer[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH];
+        char buffer[CONFIG_NETLOGGING_MESSAGE_MAX_LENGTH];
         size_t received = xMessageBufferReceive(xMessageBufferHTTP, buffer, sizeof(buffer), portMAX_DELAY);
         //printf("xMessageBufferReceive received=%d\n", received);
 #endif
@@ -200,7 +200,7 @@ void http_client(void *pvParameters)
             if (received) {
                 http_post_with_url(param.url, buffer, received);
             }
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
             vRingbufferReturnItem(xRingBufferHTTP, (void *)buffer);
 #endif
         }
@@ -218,15 +218,15 @@ void http_client(void *pvParameters)
 
 esp_err_t http_logging_init(const char *url, bool enableStdout) {
 
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
     printf("start http logging(xRingBuffer): url=[%s]\n", url);
     // Create RineBuffer
-    xRingBufferHTTP = xRingbufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
+    xRingBufferHTTP = xRingbufferCreate(CONFIG_NETLOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
     configASSERT(xRingBufferHTTP);
 #else
     printf("start http logging(xMessageBuffer): url=[%s]\n", url);
     // Create MessageBuffer
-    xMessageBufferHTTP = xMessageBufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE);
+    xMessageBufferHTTP = xMessageBufferCreate(CONFIG_NETLOGGING_BUFFER_SIZE);
     configASSERT(xMessageBufferHTTP);
 #endif
 
@@ -241,7 +241,7 @@ esp_err_t http_logging_init(const char *url, bool enableStdout) {
     printf("http ulTaskNotifyTake=%"PRIi32"\n", value);
     if (value == 0) {
         printf("stop http logging\n");
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
         vRingbufferDelete(xRingBufferHTTP);
         xRingBufferHTTP = NULL;
 #else

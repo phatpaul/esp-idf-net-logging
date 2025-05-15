@@ -118,9 +118,9 @@ static void multicast_log_sender(void *pvParameters)
 {
     NETLOGGING_LOGI("start multicast logging: ipaddr=[%s] port=%ld", server->param.ipv4addr, server->param.port);
 
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
     // Create RingBuffer
-    RingbufHandle_t xRingBuffer = xRingbufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
+    RingbufHandle_t xRingBuffer = xRingbufferCreate(CONFIG_NETLOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
     if (NULL == xRingBuffer) {
         NETLOGGING_LOGE("xRingBufferCreate failed");
         goto _init_failed;
@@ -128,7 +128,7 @@ static void multicast_log_sender(void *pvParameters)
     esp_err_t err = netlogging_register_recieveBuffer(xRingBuffer);
 #else
     // Create MessageBuffer
-    MessageBufferHandle_t xMessageBuffer = xMessageBufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE);
+    MessageBufferHandle_t xMessageBuffer = xMessageBufferCreate(CONFIG_NETLOGGING_BUFFER_SIZE);
     if (NULL == xMessageBuffer) {
         NETLOGGING_LOGE("xMessageBufferCreate failed");
         goto _init_failed;
@@ -165,12 +165,12 @@ static void multicast_log_sender(void *pvParameters)
 
         while (server->task_run)  // Inner while loop to send data
         {
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
             size_t received;
             char *buffer = (char *)xRingbufferReceive(xRingBuffer, &received, portMAX_DELAY);
             //NETLOGGING_LOGI("xRingBufferReceive received=%d", received);
 #else
-            char buffer[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH];
+            char buffer[CONFIG_NETLOGGING_MESSAGE_MAX_LENGTH];
             size_t received = xMessageBufferReceive(xMessageBuffer, buffer, sizeof(buffer), portMAX_DELAY);
             //NETLOGGING_LOGI("xMessageBufferReceive received=%d", received);
 #endif
@@ -185,7 +185,7 @@ static void multicast_log_sender(void *pvParameters)
                     break; // break out of the inner while loop, back to the outer while loop to try to create the socket again
                 }
 
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
                 vRingbufferReturnItem(xRingBuffer, (void *)buffer);
 #endif
             }
@@ -207,7 +207,7 @@ static void multicast_log_sender(void *pvParameters)
 
 _init_failed:
     // Cleanup. Task is only responsible for freeing memory that it allocated.
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
     netlogging_unregister_recieveBuffer(xRingBuffer);
     if (xRingBuffer != NULL) {
         vRingbufferDelete(xRingBuffer);

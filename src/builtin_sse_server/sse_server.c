@@ -1,22 +1,27 @@
 /*
-Simple HTTP Server with SSE (Server-Sent Events) support
-
-This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-Unless required by applicable law or agreed to in writing, this
-software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-CONDITIONS OF ANY KIND, either express or implied.
+    Simple Stand-alone HTTP Server with SSE (Server-Sent Events) for ESP32 remote logging
 */
 
+#include "net_logging.h"
 //#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE // set log level in this file only
+#include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_system.h"
 #include "esp_event.h"
+#include <stdio.h>
+#include <stdint.h>
+#include <inttypes.h>
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h" // for inet_addr_from_ip4addr
 #include "lwip/netdb.h" // for getaddrinfo
-#include "esp_netif.h"
-#include "net_logging_priv.h"
-
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
+#include "freertos/ringbuf.h"
+#else
+#include "freertos/message_buffer.h"
+#endif
 
 #define RETRY_TIMEOUT_MS (3000) // retry timeout in ms
 #define KEEPALIVE_TIMEOUT_MS (10000) // keepalive timeout in ms
@@ -25,12 +30,19 @@ CONDITIONS OF ANY KIND, either express or implied.
 #define MAX_CLIENTS (CONFIG_LWIP_MAX_SOCKETS - 3)
 #define INVALID_SOCK (-1) // Indicates that the file descriptor represents an invalid (uninitialized or closed) socket
 #define YIELD_TO_ALL_MS (50) // Time in ms to yield to all tasks when a non-blocking socket would block
+#define USE_GZIP_ASSETS (1) // Use gzip compression for index.html
+
 
 #define TAG "sse_log_sender"
 
-// File content buffer for sse.html
-extern const char sse_html_start[] asm("_binary_sse_html_start");
-extern const char sse_html_end[] asm("_binary_sse_html_end");
+// File content buffer for index.html
+#if USE_GZIP_ASSETS
+extern const char sse_html_start[] asm("_binary_index_html_gz_start");
+extern const char sse_html_end[] asm("_binary_index_html_gz_end");
+#else
+extern const char sse_html_start[] asm("_binary_index_html_start");
+extern const char sse_html_end[] asm("_binary_index_html_end");
+#endif // USE_GZIP_ASSETS
 
 struct client_handle_s
 {
@@ -142,7 +154,7 @@ static void cleanup_client(struct client_handle_s *client)
     }
     if (NULL != client->buffer) {
         netlogging_unregister_recieveBuffer(client->buffer);
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
         vRingbufferDelete(client->buffer);
 #else
         vMessageBufferDelete(client->buffer);
@@ -186,6 +198,9 @@ static int serve_client(struct client_handle_s *client)
                 "HTTP/1.1 200 OK\r\n"
                 "Content-Type: text/html\r\n"
                 "Content-Length: %d\r\n"
+#if USE_GZIP_ASSETS
+                "Content-Encoding: gzip\r\n"
+#endif // USE_GZIP_ASSETS
                 "Connection: close\r\n"
                 "\r\n",
                 sse_html_size);
@@ -219,12 +234,12 @@ static int serve_client(struct client_handle_s *client)
 
             socket_send(client->sock, headers, strlen(headers));
 
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
             // Create RingBuffer
-            client->buffer = xRingbufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
+            client->buffer = xRingbufferCreate(CONFIG_NETLOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
 #else
             // Create MessageBuffer
-            client->buffer = xMessageBufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE);
+            client->buffer = xMessageBufferCreate(CONFIG_NETLOGGING_BUFFER_SIZE);
 #endif
             if (NULL == client->buffer) {
                 NETLOGGING_LOGE("bufferCreate failed");
@@ -255,23 +270,23 @@ static int serve_client(struct client_handle_s *client)
     else {
         // Keep connection open and send SSE events
 
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
         size_t received;
         char *buffer = (char *)xRingbufferReceive(client->buffer, &received, 0); // don't wait
         if (NULL == buffer) {
             received = 0; // no data available
         }
 #else
-        char buffer[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH];
-        size_t received = xMessageBufferReceive(xMessageBufferSSE, buffer, sizeof(buffer), 0); // don't wait
+        char buffer[CONFIG_NETLOGGING_MESSAGE_MAX_LENGTH];
+        size_t received = xMessageBufferReceive(client->buffer, buffer, sizeof(buffer), 0); // don't wait
 #endif
 
         if ((NULL != buffer) && (received > 0)) {
             // Format the buffer content as an SSE event
-            char sse_event[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH + 64];
+            char sse_event[CONFIG_NETLOGGING_MESSAGE_MAX_LENGTH + 64];
             snprintf(sse_event, sizeof(sse_event), "event: log-line\ndata: %.*s\n\n", (int)received, buffer);
 
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
             vRingbufferReturnItem(client->buffer, (void *)buffer);
 #endif
 
@@ -286,7 +301,7 @@ static int serve_client(struct client_handle_s *client)
         else if (now > (client->last_activity + pdMS_TO_TICKS(KEEPALIVE_TIMEOUT_MS))) {
             // No data available, send keep-alive event
             NETLOGGING_LOGD("sending keep-alive");
-            char sse_event[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH + 64];
+            char sse_event[CONFIG_NETLOGGING_MESSAGE_MAX_LENGTH + 64];
             snprintf(sse_event, sizeof(sse_event), "event: keepalive\ndata: %"PRIu32"\n\n", now);
 
             int ret = socket_send(client->sock, sse_event, strlen(sse_event));

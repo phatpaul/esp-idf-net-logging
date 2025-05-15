@@ -1,0 +1,33 @@
+menu "Example Project Config"
+
+    config EXAMPLE_USE_NETLOGGING
+        bool "Enable net-logging component"
+        default y
+        help
+            Enable the core net-logging component
+
+    if EXAMPLE_USE_NETLOGGING
+        config EXAMPLE_USE_NETLOGGING_SSE_SERVER
+            bool "Use HTTP SSE Logging Server"
+            default y
+            help
+                Use HTTP SSE Logging Server.
+
+        if EXAMPLE_USE_NETLOGGING_SSE_SERVER
+            config EXAMPLE_NETLOGGING_SSE_LISTEN_PORT
+                int "Port to bind the SSE server on"
+                default 8080
+                help
+                    Port to bind the HTTP SSE logging server on
+
+        endif # EXAMPLE_USE_NETLOGGING_SSE_SERVER
+
+        config EXAMPLE_NETLOGGING_WRITE_TO_STDOUT
+            bool "Enable Write Logging to stdout (UART)"
+            default y
+            help
+                Enable Write Logging to stdout (UART) in addition to any network options.
+
+    endif # EXAMPLE_USE_NETLOGGING
+
+endmenu

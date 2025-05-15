@@ -1,22 +1,39 @@
-set(component_srcs 
-    "src/net_logging.c" 
-    # "src/udp_client.c" 
+cmake_minimum_required(VERSION 3.5)
+
+set(component_srcs
+    "src/net_logging.c"
+    # "src/udp_client.c"
     "src/multicast_log_sender.c"
-    # "src/tcp_client.c" 
-    # "src/mqtt_pub.c" 
+    # "src/tcp_client.c"
+    # "src/mqtt_pub.c"
     # "src/http_client.c"
-    "src/sse_server.c"
+    "src/builtin_sse_server/sse_server.c"
 )
 
 idf_component_register(
     SRCS "${component_srcs}"
-    INCLUDE_DIRS 
+    INCLUDE_DIRS
         "include"
-    PRIV_REQUIRES 
+    PRIV_REQUIRES
         esp_http_client
         esp_ringbuf
         mqtt
         esp_hw_support
-    EMBED_TXTFILES
-        "src/assets/sse.html"
 )
+
+# Include the index.html from this library if it is not customized by the project.
+if (NOT CONFIG_NETLOGGING_CUSTOM_SSE_ASSETS)
+    message (STATUS "Using built-in static assets for built-in HTTP SSE Logging Server")
+    set (asset_src "${COMPONENT_DIR}/src/builtin_sse_server/www/index.html")
+    set (asset_dst_dir "${CMAKE_BINARY_DIR}/www")
+    set (asset_dst "${asset_dst_dir}/index.html.gz")
+    add_custom_command(
+        WORKING_DIRECTORY ${COMPONENT_DIR}
+        OUTPUT ${asset_dst}
+        COMMAND ${CMAKE_COMMAND} -E echo "Compressing static assets for built-in HTTP SSE Logging Server..."
+        COMMAND python tools/compress_assets.py --outdir=${asset_dst_dir} ${asset_src}
+        DEPENDS ${asset_src}
+    )
+    add_custom_target(builtin_sse_assets DEPENDS "${asset_dst}")
+    target_add_binary_data(${COMPONENT_LIB} "${asset_dst}" BINARY)
+endif()

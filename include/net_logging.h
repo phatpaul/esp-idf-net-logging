@@ -14,6 +14,14 @@
 
 EXTERN_C_BEGIN
 
+// Don't use ESP_LOGx in this module, as it will call logging_vprintf again, causing a infinite recursion and stack overflow.
+// ESP_EARLY_LOGx macros are used instead.
+#define NETLOGGING_LOGE(fmt, args...) ESP_EARLY_LOGE(TAG, fmt, ##args)
+#define NETLOGGING_LOGW(fmt, args...) ESP_EARLY_LOGW(TAG, fmt, ##args)
+#define NETLOGGING_LOGI(fmt, args...) ESP_EARLY_LOGI(TAG, fmt, ##args)
+#define NETLOGGING_LOGD(fmt, args...) ESP_EARLY_LOGD(TAG, fmt, ##args)
+#define NETLOGGING_LOGV(fmt, args...) ESP_EARLY_LOGV(TAG, fmt, ##args)
+
 esp_err_t netlogging_init(bool enableStdout);
 esp_err_t netlogging_deinit(void);
 esp_err_t netlogging_register_recieveBuffer(void *buffer);

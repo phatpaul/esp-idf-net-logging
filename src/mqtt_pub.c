@@ -14,7 +14,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
 #include "freertos/ringbuf.h"
 #else
 #include "freertos/message_buffer.h"
@@ -33,7 +33,7 @@
 EventGroupHandle_t mqtt_status_event_group;
 #define MQTT_CONNECTED_BIT BIT2
 
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
 extern RingbufHandle_t xRingBufferMQTT;
 #else
 extern MessageBufferHandle_t xMessageBufferMQTT;
@@ -139,12 +139,12 @@ void mqtt_pub(void *pvParameters)
     xTaskNotifyGive(param.taskHandle);
 
     while (1) {
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
         size_t received;
         char *buffer = (char *)xRingbufferReceive(xRingBufferMQTT, &received, portMAX_DELAY);
         //printf("xRingBufferReceive received=%d\n", received);
 #else
-        char buffer[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH];
+        char buffer[CONFIG_NETLOGGING_MESSAGE_MAX_LENGTH];
         size_t received = xMessageBufferReceive(xMessageBufferMQTT, buffer, sizeof(buffer), portMAX_DELAY);
         //printf("xMessageBufferReceive received=%d\n", received);
 #endif
@@ -163,7 +163,7 @@ void mqtt_pub(void *pvParameters)
             else {
                 printf("Connection to MQTT broker is broken. Skip to send\n");
             }
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
             vRingbufferReturnItem(xRingBufferMQTT, (void *)buffer);
 #endif
         }
@@ -182,15 +182,15 @@ void mqtt_pub(void *pvParameters)
 
 esp_err_t mqtt_logging_init(const char *url, char *topic) {
 
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
     printf("start mqtt logging(xRingBuffer): url=[%s] topic=[%s]\n", url, topic);
     // Create RineBuffer
-    xRingBufferMQTT = xRingbufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
+    xRingBufferMQTT = xRingbufferCreate(CONFIG_NETLOGGING_BUFFER_SIZE, RINGBUF_TYPE_NOSPLIT);
     configASSERT(xRingBufferMQTT);
 #else
     printf("start mqtt logging(xMessageBuffer): url=[%s] topic=[%s]\n", url, topic);
     // Create MessageBuffer
-    xMessageBufferMQTT = xMessageBufferCreate(CONFIG_NET_LOGGING_BUFFER_SIZE);
+    xMessageBufferMQTT = xMessageBufferCreate(CONFIG_NETLOGGING_BUFFER_SIZE);
     configASSERT(xMessageBufferMQTT);
 #endif
 
@@ -206,7 +206,7 @@ esp_err_t mqtt_logging_init(const char *url, char *topic) {
     printf("mqtt ulTaskNotifyTake=%"PRIi32"\n", value);
     if (value == 0) {
         printf("stop mqtt logging\n");
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
         vRingbufferDelete(xRingBufferMQTT);
         xRingBufferMQTT = NULL;
 #else

@@ -16,18 +16,18 @@ vprintf_like_t old_vprintf = NULL;
 // Please note that function callback here must be re-entrant as it can be invoked in parallel from multiple thread context.
 static int logging_vprintf(const char *fmt, va_list l) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    char *buffer = malloc(CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH);
+    char *buffer = malloc(CONFIG_NETLOGGING_MESSAGE_MAX_LENGTH);
     if (buffer == NULL) {
         // Don't use ESP_LOGE here, as it will call logging_vprintf again, causing a infinite recursion and stack overflow.
         NETLOGGING_LOGE(TAG, "logging_vprintf malloc fail");
         return 0;
     }
-    int len = vsnprintf(buffer, CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH, fmt, l);
+    int len = vsnprintf(buffer, CONFIG_NETLOGGING_MESSAGE_MAX_LENGTH, fmt, l);
     if (len > 0) {
         const int cstr_len = len + 1;
 
         if (xSemaphoreTake(logBuffersMutex, portMAX_DELAY) == pdTRUE) {
-#if CONFIG_NET_LOGGING_USE_RINGBUFFER
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
             // Send to RingBuffers
             for (int i = 0; i < 6; i++) {
                 if (logBuffers[i] != NULL) {
@@ -104,7 +104,7 @@ esp_err_t netlogging_unregister_recieveBuffer(void *buffer)
     }
     esp_err_t ret = ESP_ERR_NOT_FOUND;
     if (xSemaphoreTake(logBuffersMutex, portMAX_DELAY) == pdTRUE) {
-        // search for buffer by pointer 
+        // search for buffer by pointer
         for (int i = 0; i < 6; i++) {
             if (logBuffers[i] == buffer) {
                 logBuffers[i] = NULL;
