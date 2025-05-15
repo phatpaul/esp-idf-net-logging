@@ -8,8 +8,9 @@ software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
 CONDITIONS OF ANY KIND, either express or implied.
 */
 
-#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE // set log level in this file only
+//#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE // set log level in this file only
 #include "esp_system.h"
+#include "esp_event.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h" // for inet_addr_from_ip4addr
 #include "lwip/netdb.h" // for getaddrinfo
@@ -19,7 +20,7 @@ CONDITIONS OF ANY KIND, either express or implied.
 
 #define RETRY_TIMEOUT_MS (3000) // retry timeout in ms
 #define KEEPALIVE_TIMEOUT_MS (10000) // keepalive timeout in ms
-#define STOPPED_BIT (1UL << 0) // bit to signal that task has stopped
+
 #define STOP_WAITTIME (8000 / portTICK_PERIOD_MS) // wait this long for task to stop
 #define MAX_CLIENTS (CONFIG_LWIP_MAX_SOCKETS - 3)
 #define INVALID_SOCK (-1) // Indicates that the file descriptor represents an invalid (uninitialized or closed) socket
@@ -46,7 +47,8 @@ struct server_handle_s
     EventGroupHandle_t *state_event;      /*!< Task's state event group */
 };
 static struct server_handle_s *server = NULL;
-
+#define STOPPED_BIT (1UL << 0) // bit to signal that task has stopped
+#define NET_CHANGED_BIT (1UL << 1) // bit to signal that network configuration has changed
 
 /**
  * @brief Tries to receive data from specified sockets in a non-blocking way,
@@ -99,6 +101,10 @@ static int socket_send(const int sock, const char *data, const size_t len)
             return -1;
         }
         to_write -= written;
+        if (to_write > 0) {
+            // If not all data has been sent, yield to other tasks before continuing
+            vTaskDelay(pdMS_TO_TICKS(YIELD_TO_ALL_MS));
+        }
     }
     return len;
 }
@@ -125,9 +131,12 @@ static inline char *get_clients_address(struct sockaddr_storage *source_addr)
     return address_str;
 }
 
+
+
 static void cleanup_client(struct client_handle_s *client)
 {
     if (INVALID_SOCK != client->sock) {
+        shutdown(client->sock, 0);
         close(client->sock);
         client->sock = INVALID_SOCK;
     }
@@ -149,10 +158,6 @@ static int serve_client(struct client_handle_s *client)
     // first time serving this client?
     if (NULL == client->buffer)
     {
-        // first time serving this client
-        NETLOGGING_LOGD("serve new client");
-        const size_t sse_html_size = sse_html_end - sse_html_start;
-
         // Receive HTTP request
         char request[1024];
         int req_len = try_receive(client->sock, request, sizeof(request) - 1);
@@ -162,10 +167,13 @@ static int serve_client(struct client_handle_s *client)
         }
         if (req_len < 0) {
             // Error occurred within this client's socket -> close and mark invalid
-            NETLOGGING_LOGD("try_receive() returned %d -> closing the socket", req_len);
-            return -1;
+            return req_len;
         }
+
         // Else got HTTP request
+        const size_t sse_html_size = sse_html_end - sse_html_start;
+        // first time serving this client
+        NETLOGGING_LOGD("serve new client");
 
         // Null-terminate received data
         request[req_len] = 0;
@@ -227,7 +235,7 @@ static int serve_client(struct client_handle_s *client)
                 NETLOGGING_LOGE("netlogging_register_recieveBuffer failed");
                 return -1;
             }
-            client->last_activity = now;
+            client->last_activity = 0; // force a keep-alive event on first run
         }
         else {
             // Not found response for other paths
@@ -245,7 +253,7 @@ static int serve_client(struct client_handle_s *client)
         }
     }
     else {
-           // Keep connection open and send SSE events
+        // Keep connection open and send SSE events
 
 #if CONFIG_NET_LOGGING_USE_RINGBUFFER
         size_t received;
@@ -274,7 +282,8 @@ static int serve_client(struct client_handle_s *client)
                 return -1;
             }
             client->last_activity = now;
-        } else if (now > (client->last_activity + pdMS_TO_TICKS(KEEPALIVE_TIMEOUT_MS))) {
+        }
+        else if (now > (client->last_activity + pdMS_TO_TICKS(KEEPALIVE_TIMEOUT_MS))) {
             // No data available, send keep-alive event
             NETLOGGING_LOGD("sending keep-alive");
             char sse_event[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH + 64];
@@ -291,14 +300,23 @@ static int serve_client(struct client_handle_s *client)
     return 0;
 }
 
+static void network_changed_handler(void *arg, esp_event_base_t event_base,
+    const int32_t event_id, void *event_data)
+{
+    if (NULL == server) {
+        return;
+    }
+    xEventGroupSetBits(server->state_event, NET_CHANGED_BIT);
+}
 
 static void server_task(void *pvParameters)
 {
     NETLOGGING_LOGD("Starting HTTP Logging Server");
+
     while (server->task_run) // Outer while loop to (re)start server
     {
         if (server->start_count > 0) {
-            vTaskDelay(RETRY_TIMEOUT_MS / portTICK_PERIOD_MS);
+            vTaskDelay(pdMS_TO_TICKS(RETRY_TIMEOUT_MS));
             NETLOGGING_LOGD("Restart HTTP Logging Server");
         }
         server->start_count++;
@@ -369,9 +387,9 @@ static void server_task(void *pvParameters)
             NETLOGGING_LOGE("Error listening on socket: errno %d", errno);
             continue; // continue outer while loop to retry
         }
-
         NETLOGGING_LOGI("HTTP Logging Server listening on port %d", server->param.port);
 
+        xEventGroupClearBits(server->state_event, NET_CHANGED_BIT);
 
         while (server->task_run) // Inner loop to accept clients
         {
@@ -430,9 +448,15 @@ static void server_task(void *pvParameters)
                 } // one client's socket
             } // for all sockets
 
+            // Check if network configuration has changed
+            EventBits_t uxBits = xEventGroupWaitBits(server->state_event, NET_CHANGED_BIT, true, true, 0);
+            if (uxBits & NET_CHANGED_BIT) {
+                NETLOGGING_LOGD("Network configuration changed");
+                break; // break out of the inner while loop, back to the outer while loop to try to create the socket again
+            }
+
             // Yield to other tasks
             vTaskDelay(pdMS_TO_TICKS(YIELD_TO_ALL_MS));
-
         } // end inner while
 
         NETLOGGING_LOGD("close and restart...");
@@ -506,6 +530,10 @@ esp_err_t netlogging_sse_server_init(const sse_logging_param_t *param)
         NETLOGGING_LOGE("xEventGroupCreate failed");
         goto _init_failed;
     }
+    // Register for events that indicate a change in network configuration
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_START, &network_changed_handler, NULL);
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &network_changed_handler, NULL);
+    esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &network_changed_handler, NULL);
     return ESP_OK;
 
 _init_failed:
@@ -517,11 +545,13 @@ esp_err_t netlogging_sse_server_deinit(void)
 {
     if (server)
     {
+        esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_AP_START, &network_changed_handler);
+        esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &network_changed_handler);
+        esp_event_handler_unregister(IP_EVENT, IP_EVENT_ETH_GOT_IP, &network_changed_handler);
         if (server->state_event)
         {
             vEventGroupDelete(server->state_event);
         }
-
         free(server);
         server = NULL;
         return ESP_OK;

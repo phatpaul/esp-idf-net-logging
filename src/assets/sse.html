@@ -74,6 +74,15 @@
       margin-bottom: 2px;
       border-left: 3px solid #555;
     }
+    .log-line.error {
+      border-left-color: #e74c3c;
+    }
+    .log-line.warning {
+      border-left-color: #f39c12;
+    }
+    .log-line.info {
+      border-left-color: green;
+    }
 
     .log-line:hover {
       background-color: rgba(255, 255, 255, 0.05);
@@ -128,6 +137,7 @@
   </div>
 
   <script type="text/javascript">
+    //@ts-check
     // Elements
     const logsContainer = document.getElementById('logs');
     const clearBtn = document.getElementById('clearBtn');
@@ -171,18 +181,33 @@
       scrollBtn.style.backgroundColor = autoScroll ? '#2ecc71' : '';
     }
 
-    function onLogLineReceived(event) {
-      feedWatchdog();
+    function addLogLine(logLine, extraClass = '') {
       if (isPaused) return;
-      const logLine = event.data.replace(/\u001b[^m]*?m/g,""); // Remove ANSI escape codes
       const log = document.createElement('span');
-      log.className = 'log-line';
+      log.classList.add('log-line');
+      if (extraClass) {
+        log.classList.add(extraClass);
+      }
       log.innerText = logLine;
       logsContainer.appendChild(log);
-
       if (autoScroll) {
         logsContainer.scrollTop = logsContainer.scrollHeight;
       }
+    }
+
+    function onLogLineReceived(event) {
+      feedWatchdog();
+      /**@type {string} */
+      const logLine = event.data.replace(/\u001b[^m]*?m/g,""); // Remove ANSI escape codes
+      let extraClass = '';
+      if (logLine.startsWith('E ')) {
+        extraClass = 'error';
+      } else if (logLine.startsWith('W ')) {
+        extraClass = 'warning';
+      } else if (logLine.startsWith('I ')) {
+        extraClass = 'info';
+      }
+      addLogLine(logLine, extraClass);
     }
 
     function onKeepAlive(event) {
@@ -193,10 +218,7 @@
     function onConnected() {
       connectionStatus.textContent = 'Connected';
       connectionStatus.style.color = '#2ecc71';
-      const log = document.createElement('span');
-      log.className = 'log-line';
-      log.innerText = '******************  Connected!  ******************';
-      logsContainer.appendChild(log);
+      addLogLine('Connected!', 'error');
     }
 
     function onDisconnected() {
@@ -224,7 +246,7 @@
         clearTimeout(watchdogTimer);
       }
       watchdogTimer = setTimeout(() => {
-        log.innerText = '****************  Connection Timeout!  ****************';
+        addLogLine('Connection Timeout!', 'error');
         onDisconnected();
         subscribeToSSE();
       }, 15000);
