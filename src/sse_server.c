@@ -8,7 +8,7 @@ software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
 CONDITIONS OF ANY KIND, either express or implied.
 */
 
-//#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE // set log level in this file only
+#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE // set log level in this file only
 #include "esp_system.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h" // for inet_addr_from_ip4addr
@@ -273,9 +273,10 @@ static int serve_client(struct client_handle_s *client)
                 NETLOGGING_LOGD("Error sending SSE event: errno %d", errno);
                 return -1;
             }
+            client->last_activity = now;
         } else if (now > (client->last_activity + pdMS_TO_TICKS(KEEPALIVE_TIMEOUT_MS))) {
             // No data available, send keep-alive event
-
+            NETLOGGING_LOGD("sending keep-alive");
             char sse_event[CONFIG_NET_LOGGING_MESSAGE_MAX_LENGTH + 64];
             snprintf(sse_event, sizeof(sse_event), "event: keepalive\ndata: %"PRIu32"\n\n", now);
 
@@ -284,9 +285,9 @@ static int serve_client(struct client_handle_s *client)
                 NETLOGGING_LOGD("Error sending keep-alive: errno %d", errno);
                 return -1;
             }
+            client->last_activity = now;
         }
     }
-    client->last_activity = now;
     return 0;
 }
 

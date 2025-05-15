@@ -185,6 +185,11 @@
       }
     }
 
+    function onKeepAlive(event) {
+      console.debug('Keep-alive event received: ', event.data);
+      feedWatchdog();
+    }
+
     function onConnected() {
       connectionStatus.textContent = 'Connected';
       connectionStatus.style.color = '#2ecc71';
@@ -208,7 +213,7 @@
       events.onopen = onConnected;
       events.onerror = onDisconnected;
       events.addEventListener('log-line', onLogLineReceived, false);
-      events.addEventListener('keepalive', feedWatchdog, false);
+      events.addEventListener('keepalive', onKeepAlive, false);
       feedWatchdog();
     }
 
@@ -219,6 +224,7 @@
         clearTimeout(watchdogTimer);
       }
       watchdogTimer = setTimeout(() => {
+        log.innerText = '****************  Connection Timeout!  ****************';
         onDisconnected();
         subscribeToSSE();
       }, 15000);

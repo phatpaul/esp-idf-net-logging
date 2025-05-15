@@ -17,6 +17,8 @@ import time  # Add this import for retry delays
 DEF_PORT = 8080
 DEF_PATH = "/log-events"
 
+SSE_FIELD_SEPARATOR = ':'
+
 def escape_ansi(line):
 	ansi_escape = re.compile(r'(?:\x1B[@-_]|[\x80-\x9F])[0-?]*[ -/]*[@-~]')
 	return ansi_escape.sub('', line)
@@ -44,24 +46,48 @@ def run_sse_client(host, port, path):
 	# Send the HTTP GET request
 	request = f"GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: text/event-stream\r\n\r\n"
 	sock.sendall(request.encode('utf-8'))
+	logging.info("***************  Connected!  ***************")
 
 	while True:
-		data = sock.recv(1024)
-		if not data:
-			break
-		data = data.decode('utf-8')
-		data = escape_ansi(data) # remove ANSI color codes for the txt file
-		logging.info(data)
+		# Set a timeout for the socket, since server will send keepalive messages every 10 seconds.
+		sock.settimeout(15)
+		recvstr = sock.recv(1024)
+		if not recvstr:
+			break # timeout or connection closed
+		recvstr = recvstr.decode('utf-8')
+		event_type = None
+		event_data = None
+		for line in recvstr.splitlines():
+			# Lines starting with a separator are comments and are to be ignored.
+			if not line.strip() or line.startswith(SSE_FIELD_SEPARATOR):
+				continue
+			parts = line.split(SSE_FIELD_SEPARATOR, 1)
+			field = parts[0].strip()
+			if len(parts) < 2:
+				continue
+			if "event" == field:
+				event_type = parts[1].strip()
+			elif "data" == field:
+				event_data = parts[1].strip()
+
+		if "keepalive" == event_type:
+			continue
+		if "log-line" == event_type:
+			if event_data:
+				event_data = escape_ansi(event_data) # remove ANSI color codes
+				event_data = event_data.rstrip() # remove trailing whitespace and newlines
+				logging.info(event_data)
+
 
 def run_sse_client_with_retries(host, port, path, retry_delay=5):
 	while True:
 		try:
 			run_sse_client(host, port, path)
 		except (socket.error, ConnectionError) as e:
-			logging.error(f"Connection error: {e}. Retrying in {retry_delay} seconds...")
+			logging.error(f"***************  Connection error: {e}. Retrying in {retry_delay} seconds...")
 			time.sleep(retry_delay)
 		except Exception as e:
-			logging.error(f"Unexpected error: {e}. Retrying in {retry_delay} seconds...")
+			logging.error(f"***************  Unexpected error: {e}. Retrying in {retry_delay} seconds...")
 			time.sleep(retry_delay)
 
 if __name__ == "__main__":
@@ -79,5 +105,5 @@ if __name__ == "__main__":
 	logging.debug("Logging started. Press Ctrl-C to stop.")
 	logging.debug("")
 	logging.debug("")
-	
+
 	run_sse_client_with_retries(host = args.addr, port = args.port, path = args.path)
