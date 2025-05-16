@@ -4,7 +4,11 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "net_logging_priv.h"
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
+#include "freertos/ringbuf.h"
+#else
+#include "freertos/message_buffer.h"
+#endif
 
 #define TAG "net_logging: "
 

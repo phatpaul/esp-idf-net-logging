@@ -1,119 +1,123 @@
 menu "Example Project Config"
 
-	config WRITE_TO_STDOUT
-		bool "Enable write Logging to STDOUT"
-		default y
-		help
-			Enable write Logging to STDOUT.
+    config EXAMPLE_USE_NETLOGGING
+        bool "Enable net-logging component"
+        default y
+        help
+            Enable the core net-logging component
 
-	config USE_RINGBUFFER
-		bool "Use xRingBuffer as IPC"
-		default n
-		help
-			Use xRingBuffer as IPC.
+    if EXAMPLE_USE_NETLOGGING
 
-	config ESP_WIFI_SSID
-		string "WiFi SSID"
-		default "myssid"
-		help
-			SSID (network name) for the example to connect to.
+        config EXAMPLE_USE_NETLOGGING_SSE_SERVER
+            bool "Use HTTP SSE Logging Server"
+            default y
+            help
+                Use HTTP SSE Logging Server.
 
-	config ESP_WIFI_PASSWORD
-		string "WiFi Password"
-		default "mypassword"
-		help
-			WiFi password (WPA or WPA2) for the example to use.
+        if EXAMPLE_USE_NETLOGGING_SSE_SERVER
 
-	config ESP_MAXIMUM_RETRY
-		int "Maximum retry"
-		default 5
-		help
-			Set the Maximum retry to avoid station reconnecting to the AP unlimited when the AP is really inexistent.
+            config EXAMPLE_NETLOGGING_SSE_LISTEN_PORT
+                int "[SSE] Port to bind the SSE server on"
+                default 8080
+                help
+                    Port to bind the HTTP SSE logging server on
 
-	config ENABLE_UDP_LOG
-		bool "Use UDP Logging"
-		default n
-		help
-			Use UDP Logging.
+        endif # EXAMPLE_USE_NETLOGGING_SSE_SERVER
 
-	config LOG_UDP_SERVER_IP
-		depends on ENABLE_UDP_LOG
-		string "[UDP] IP address to send log output"
-		default "255.255.255.255"
-		help
-			IP address to send log output to
+        config EXAMPLE_USE_NETLOGGING_MULTICAST
+            bool "Use IP Multicast to send logs"
+            default y
+            help
+                Use IP Multicast to send logs.
 
-	config LOG_UDP_SERVER_PORT
-		depends on ENABLE_UDP_LOG
-		int "[UDP] Port to send log output" 
-		default 6789
-		help
-			Port to send log output to
+        if EXAMPLE_USE_NETLOGGING_MULTICAST
 
-	config ENABLE_TCP_LOG
-		bool "Use TCP Logging"
-		default n
-		help
-			Use TCP Logging.
+            config EXAMPLE_NETLOGGING_MULTICAST_IP
+                string "[Multicast] IP address/group to send log output"
+                default "239.2.1.2"
+                help
+                    Multicast IP address/group to send log output
 
-	config LOG_TCP_SERVER_IP
-		depends on ENABLE_TCP_LOG
-		string "[TCP] IP address to send log output"
-		default "192.168.10.46"
-		help
-			IP address to send log output to
+            config EXAMPLE_NETLOGGING_MULTICAST_PORT
+                int "[Multicast] Port to send log output"
+                default 2054
+                help
+                    Multicast Port to send log output
 
-	config LOG_TCP_SERVER_PORT
-		depends on ENABLE_TCP_LOG
-		int "[TCP] Port to send log output" 
-		default 8080
-		help
-			Port to send log output to
+        endif # EXAMPLE_USE_NETLOGGING_MULTICAST
 
-	config ENABLE_MQTT_LOG
-		bool "Use MQTT Logging"
-		default n
-		help
-			Use MQTT Logging.
+        config EXAMPLE_USE_NETLOGGING_UDP
+            bool "Use UDP Client to send logs"
+            default y
+            help
+                Use UDP Client to send logs.
 
-	config LOG_MQTT_SERVER_URL
-		depends on ENABLE_MQTT_LOG
-		string "URL of the mqtt server to connect to"
-		default "mqtt://broker.emqx.io:1883"
-		help
-			URL of the mqtt server to connect to
+        if EXAMPLE_USE_NETLOGGING_UDP
 
-	config LOG_MQTT_PUB_TOPIC
-		depends on ENABLE_MQTT_LOG
-		string "Publish Topic"
-		default "/esp32/logging"
-		help
-			Topic of publish
+            config EXAMPLE_NETLOGGING_UDP_IP
+                string "[UDP] IP address to send log output"
+                default "255.255.255.255"
+                help
+                    IP address to send log output to
 
-	config ENABLE_HTTP_LOG
-		bool "Use HTTP Logging"
-		default n
-		help
-			Use HTTP Logging.
+            config EXAMPLE_NETLOGGING_UDP_PORT
+                int "[UDP] Port to send log output"
+                default 6789
+                help
+                    Port to send log output to
 
-	config LOG_HTTP_SERVER_URL
-		depends on ENABLE_HTTP_LOG
-		string "URL of the http server to connect to"
-		default "http://myhttpserver.local:8000"
-		help
-			URL of the http server to connect to.
+        endif # EXAMPLE_USE_NETLOGGING_UDP
 
-	config ENABLE_SSE_SERVER_LOG
-		bool "Use SSE Logging"
-		default n
-		help
-			Use SSE Logging.
+        config EXAMPLE_USE_NETLOGGING_TCP
+            bool "Use TCP Client to send logs"
+            default y
+            help
+                Use TCP Client to send logs.
 
-	config LOG_SSE_LISTEN_PORT
-		depends on ENABLE_SSE_SERVER_LOG
-		int "Port to bind the SSE server on"
-		default 8080
-		help
-			Port to bind the SSE server on
+        if EXAMPLE_USE_NETLOGGING_TCP
+
+            config EXAMPLE_NETLOGGING_TCP_IP
+                string "[TCP] IP address to send log output"
+                default "192.168.10.46"
+                help
+                    IP address to send log output to
+
+            config EXAMPLE_NETLOGGING_TCP_PORT
+                int "[TCP] Port to send log output"
+                default 8080
+                help
+                    Port to send log output to
+
+        endif # EXAMPLE_USE_NETLOGGING_TCP
+
+
+        config EXAMPLE_USE_NETLOGGING_HTTP_CLIENT
+            bool "Use HTTP Client to send logs"
+            default y
+            help
+                Use HTTP Client to send logs to an external HTTP server.
+
+        if EXAMPLE_USE_NETLOGGING_HTTP_CLIENT
+
+            config EXAMPLE_NETLOGGING_HTTP_CLIENT_CONNECT_URL
+                string "[HTTP] URL of the http server to connect to"
+                default "http://myhttpserver.local:8000"
+                help
+                    URL of the http server to connect to.
+
+        endif # EXAMPLE_USE_NETLOGGING_HTTP_CLIENT
+
+        config EXAMPLE_NETLOGGING_WRITE_TO_STDOUT
+            bool "Enable Write Logging to stdout (UART)"
+            default y
+            help
+                Enable Write Logging to stdout (UART) in addition to any network options.
+
+    endif # EXAMPLE_USE_NETLOGGING
+
+
+
+
+
 
 endmenu

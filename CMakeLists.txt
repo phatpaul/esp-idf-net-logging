@@ -2,11 +2,10 @@ cmake_minimum_required(VERSION 3.5)
 
 set(component_srcs
     "src/net_logging.c"
-    # "src/udp_client.c"
-    "src/multicast_log_sender.c"
-    # "src/tcp_client.c"
-    # "src/mqtt_pub.c"
-    # "src/http_client.c"
+    # "src/builtin_client/udp_client.c"
+    "src/builtin_client/multicast_log_sender.c"
+    # "src/builtin_client/tcp_client.c"
+    # "src/builtin_client/http_client.c"
     "src/builtin_sse_server/sse_server.c"
 )
 
@@ -17,7 +16,6 @@ idf_component_register(
     PRIV_REQUIRES
         esp_http_client
         esp_ringbuf
-        mqtt
         esp_hw_support
 )
 

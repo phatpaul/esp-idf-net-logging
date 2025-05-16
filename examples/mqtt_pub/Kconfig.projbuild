@@ -1,0 +1,44 @@
+menu "Example Project Config"
+
+    config EXAMPLE_USE_NETLOGGING
+        bool "Enable net-logging component"
+        depends on ENABLE_UDP_LOG
+        default y
+        help
+            Enable the core net-logging component
+
+    if EXAMPLE_USE_NETLOGGING
+
+        config ENABLE_USE_NETLOGGING_MQTT_PUB
+            bool "Use MQTT Logging"
+            default n
+            help
+                Use MQTT Logging.
+
+        if ENABLE_USE_NETLOGGING_MQTT_PUB
+
+        config EXAMPLE_NETLOGGING_MQTT_PUB_SERVER_URL
+            depends on ENABLE_MQTT_LOG
+            string "URL of the mqtt server to connect to"
+            default "mqtt://broker.emqx.io:1883"
+            help
+                URL of the mqtt server to connect to
+
+        config EXAMPLE_NETLOGGING_MQTT_PUB_TOPIC
+            depends on ENABLE_MQTT_LOG
+            string "Publish Topic"
+            default "/esp32/logging"
+            help
+                Topic of publish
+
+        endif # ENABLE_USE_NETLOGGING_MQTT_PUB
+
+        config EXAMPLE_NETLOGGING_WRITE_TO_STDOUT
+            bool "Enable Write Logging to stdout (UART)"
+            default y
+            help
+                Enable Write Logging to stdout (UART) in addition to any network options.
+
+    endif # EXAMPLE_USE_NETLOGGING
+
+endmenu

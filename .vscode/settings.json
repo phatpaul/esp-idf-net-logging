@@ -3,6 +3,7 @@
         "net_logging.h": "c",
         "esp_event.h": "c",
         "stdio.h": "c",
-        "event_groups.h": "c"
+        "event_groups.h": "c",
+        "freertos.h": "c"
     }
 }

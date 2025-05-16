@@ -500,7 +500,12 @@ esp_err_t netlogging_sse_server_run(void)
     // Start Multicast Sender task
     server->task_run = true;
     server->start_count = 0;
-    return xTaskCreate(server_task, "HTTP SSE", 1024 * 6, NULL, 2, NULL);
+    if( xTaskCreate(server_task, "HTTP SSE", 1024 * 6, NULL, 2, NULL) != pdPASS) {
+        NETLOGGING_LOGE("xTaskCreate failed");
+        server->task_run = false;
+        return ESP_FAIL;
+    }
+    return ESP_OK;
 }
 
 esp_err_t netlogging_sse_server_wait_for_stop(void)

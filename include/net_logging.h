@@ -28,18 +28,25 @@ esp_err_t netlogging_register_recieveBuffer(void *buffer);
 esp_err_t netlogging_unregister_recieveBuffer(void *buffer);
 
 typedef struct {
-    char ipv4addr[16];
+    const char *ipv4addr;
     unsigned long port;
 } udp_logging_param_t;
+#define NETLOGGING_UDP_DEFAULT_CONFIG() {  \
+    .ipv4addr = "255.255.255",\
+    .port = 6789,             \
+}
 esp_err_t netlogging_udp_client_init(const udp_logging_param_t *param);
+esp_err_t netlogging_udp_client_run(void);
+esp_err_t netlogging_udp_client_stop(void);
+esp_err_t netlogging_udp_client_deinit(void);
 
 typedef struct {
-    char ipv4addr[16];
+    const char *ipv4addr;
     unsigned long port;
 } multicast_logging_param_t;
 #define NETLOGGING_MULTICAST_DEFAULT_CONFIG() {  \
     .ipv4addr = "239.2.1.2",\
-    .port = 2054,                    \
+    .port = 2054,           \
 }
 esp_err_t netlogging_multicast_sender_init(const multicast_logging_param_t *param);
 esp_err_t netlogging_multicast_sender_run(void);
@@ -47,21 +54,21 @@ esp_err_t netlogging_multicast_sender_stop(void);
 esp_err_t netlogging_multicast_sender_deinit(void);
 
 typedef struct {
-    char ipv4addr[16];
+    const char *ipv4addr;
     unsigned long port;
 } tcp_logging_param_t;
 esp_err_t netlogging_tcp_client_init(const tcp_logging_param_t *param);
+esp_err_t netlogging_tcp_client_run(void);
+esp_err_t netlogging_tcp_client_stop(void);
+esp_err_t netlogging_tcp_client_deinit(void);
 
 typedef struct {
-    char url[128];
-    char topic[64];
-} mqtt_logging_param_t;
-esp_err_t mqtt_logging_init(const mqtt_logging_param_t *param);
-
-typedef struct {
-    char url[128];
+    const char *url;
 } http_logging_param_t;
-esp_err_t http_logging_init(const http_logging_param_t *param);
+esp_err_t netlogging_http_client_init(const http_logging_param_t *param);
+esp_err_t netlogging_http_client_run(void);
+esp_err_t netlogging_http_client_stop(void);
+esp_err_t netlogging_http_client_deinit(void);
 
 typedef struct {
     unsigned long port;

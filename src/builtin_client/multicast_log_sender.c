@@ -1,20 +1,27 @@
 /*
-    Multicast Log Sender
-
-    This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-    Unless required by applicable law or agreed to in writing, this
-    software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-    CONDITIONS OF ANY KIND, either express or implied.
+    Multicast IP Log Sender for ESP32 remote logging
 */
 
-
+#include "net_logging.h"
+//#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE // set log level in this file only
+#include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_system.h"
+#include "esp_event.h"
+#include <stdio.h>
+#include <stdint.h>
+#include <inttypes.h>
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h" // for inet_addr_from_ip4addr
 #include "lwip/netdb.h" // for getaddrinfo
-#include "esp_netif.h"
-#include "net_logging_priv.h"
+#if CONFIG_NETLOGGING_USE_RINGBUFFER
+#include "freertos/ringbuf.h"
+#else
+#include "freertos/message_buffer.h"
+#endif
 
 #define MULTICAST_TTL (1) // 1=don't leave the subnet
 #define USE_DEFAULT_IF (1) // 1=bind to default interface, 0=bind to specific interface
@@ -166,12 +173,12 @@ static void multicast_log_sender(void *pvParameters)
         while (server->task_run)  // Inner while loop to send data
         {
 #if CONFIG_NETLOGGING_USE_RINGBUFFER
-            size_t received;
-            char *buffer = (char *)xRingbufferReceive(xRingBuffer, &received, portMAX_DELAY);
+            size_t received = 0;
+            char *buffer = (char *)xRingbufferReceive(xRingBuffer, &received, pdMS_TO_TICKS(1000));
             //NETLOGGING_LOGI("xRingBufferReceive received=%d", received);
 #else
             char buffer[CONFIG_NETLOGGING_MESSAGE_MAX_LENGTH];
-            size_t received = xMessageBufferReceive(xMessageBuffer, buffer, sizeof(buffer), portMAX_DELAY);
+            size_t received = xMessageBufferReceive(xMessageBuffer, buffer, sizeof(buffer), pdMS_TO_TICKS(1000));
             //NETLOGGING_LOGI("xMessageBufferReceive received=%d", received);
 #endif
             if (received > 0) {
@@ -189,12 +196,8 @@ static void multicast_log_sender(void *pvParameters)
                 vRingbufferReturnItem(xRingBuffer, (void *)buffer);
 #endif
             }
-            else {
-                NETLOGGING_LOGE("BufferReceive fail");
-                // wait and then try again
-                vTaskDelay(RETRY_TIMEOUT_MS / portTICK_PERIOD_MS);
-                break; // break out of the inner while loop, back to the outer while loop to try to create the socket again
-            }
+            // Else timed out waiting for data from buffer, round the loop to check if task should keep running
+
         } // end inner while
 
         NETLOGGING_LOGI("close socket and restart...");
@@ -233,7 +236,12 @@ esp_err_t netlogging_multicast_sender_run(void)
 
     // Start Multicast Sender task
     server->task_run = true;
-    return xTaskCreate(multicast_log_sender, "MCAST", 1024 * 6, NULL, 2, NULL);
+    if(xTaskCreate(multicast_log_sender, "MCAST", 1024 * 6, NULL, 2, NULL)!= pdPASS) {
+        NETLOGGING_LOGE("xTaskCreate failed");
+        server->task_run = false;
+        return ESP_FAIL;
+    }
+    return ESP_OK;
 }
 
 esp_err_t netlogging_multicast_sender_wait_for_stop(void)

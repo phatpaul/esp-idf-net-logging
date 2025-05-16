@@ -1,6 +1,24 @@
 {
   "configurations": [
     {
+      "name": "examples/basic",
+      "cStandard": "c11",
+      "cppStandard": "c++17",
+      "compileCommands": "${workspaceFolder}/examples/basic/build/compile_commands.json",
+      "includePath": [
+        "${workspaceFolder}/examples/basic/build/config",
+        "${workspaceFolder}/include"
+      ],
+      "browse": {
+        "path": [
+          "${workspaceFolder}/examples/basic/main",
+          "${workspaceFolder}/src/"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      },
+      "configurationProvider": "ms-vscode.cmake-tools"
+    },
+    {
       "name": "examples/sse_server",
       "cStandard": "c11",
       "cppStandard": "c++17",
