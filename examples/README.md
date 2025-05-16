@@ -4,19 +4,23 @@ This folder contains example applications and scripts demonstrating the usage of
 
 ## Available Examples
 
-### 1. **Basic Net-Logging Example**
+### **Basic Net-Logging Example**
 - Demonstrates how to initialize and use the `net-logging` component for basic logging.
-- You can enable/disable several simple networking protocol options via menuconfig.
+- You can enable/disable several built-in networking protocol options via menuconfig.
 
-### 2. **UART Select Net-Logging Example**
+### **HTTP SSE Logging Server Example**
+- Demonstrates how to use the `net-logging` component to implement a HTTP Server-Sent Events (SSE) logging server.
+- This example also shows how to provide a customized html page.
+
+### **UART Select Net-Logging Example**
 - Demonstrates when UART0 is used to communicate with some peripherals, it can't be used for logging. So logging is redirected to the network.
-- You can enable/disable several simple networking protocol options via menuconfig.
+- You can enable/disable several built-in networking protocol options via menuconfig.
 
-### 3. **MQTT Net-Logging Example**
+### **MQTT Net-Logging Example**
 - Demonstrates publishing logs to an MQTT broker.
 - TODO
 
-### 3. **VFS File Logging Example**
+### **VFS File Logging Example**
 - Demonstrates writing logs to a local filesystem (internal FLASH or SD/MMC card).
 - Saved logs can be later retrieved via an embedded HTTP server.
 - TODO
