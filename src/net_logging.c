@@ -70,7 +70,7 @@ static int logging_vprintf(const char *fmt, va_list l) {
 /**
  * @brief Register a buffer to be used for logging.
  *
- * @param buffer The buffer to register.
+ * @param buffer The buffer to register. It must be a valid pointer to a MessageBufferHandle_t or RingbufHandle_t.
  * @return ESP_OK on success, ESP_ERR_INVALID_ARG if buffer is NULL, ESP_ERR_NO_MEM if no empty slot found.
  */
 esp_err_t netlogging_register_recieveBuffer(void *buffer)
@@ -98,7 +98,8 @@ esp_err_t netlogging_register_recieveBuffer(void *buffer)
 /**
  * @brief Unregister a buffer to be used for logging.
  *
- * @param buffer The buffer to unregister.
+ * @param buffer The buffer to unregister. Note that this function does not free the buffer itself, it just unregisters it from the logging system.
+ * It is the caller's responsibility to free the buffer if it was dynamically allocated.
  * @return ESP_OK on success, ESP_ERR_INVALID_ARG if buffer is NULL, ESP_ERR_NOT_FOUND if buffer was not found.
  */
 esp_err_t netlogging_unregister_recieveBuffer(void *buffer)
@@ -121,6 +122,11 @@ esp_err_t netlogging_unregister_recieveBuffer(void *buffer)
     return ret;
 }
 
+/**
+ * @brief Initialize the netlogging component. Must do this before using any other functions.
+ * @param enableStdout If true, log entries will also be printed to stdout (UART).
+ * @return ESP_OK on success, ESP_ERR_NO_MEM if memory allocation failed.
+ */
 esp_err_t netlogging_init(bool enableStdout) {
     // Set function used to output log entries.
     writeToStdout = enableStdout;
@@ -137,6 +143,12 @@ esp_err_t netlogging_init(bool enableStdout) {
     return ESP_OK;
 }
 
+/**
+ * @brief Deinitialize the netlogging component. 
+ * This should be called when the component is no longer needed to free up resources. 
+ * Make sure to unregister all buffers before calling this function.
+ * @return ESP_OK on success.
+ */
 esp_err_t netlogging_deinit() {
     // Restore previous function used to output log entries.
     esp_log_set_vprintf(old_vprintf);

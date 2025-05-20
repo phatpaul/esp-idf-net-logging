@@ -23,9 +23,9 @@ EXTERN_C_BEGIN
 #define NETLOGGING_LOGV(fmt, args...) ESP_EARLY_LOGV(TAG, fmt, ##args)
 
 esp_err_t netlogging_init(bool enableStdout);
-esp_err_t netlogging_deinit(void);
 esp_err_t netlogging_register_recieveBuffer(void *buffer);
 esp_err_t netlogging_unregister_recieveBuffer(void *buffer);
+esp_err_t netlogging_deinit(void);
 
 typedef struct {
     const char *ipv4addr;
