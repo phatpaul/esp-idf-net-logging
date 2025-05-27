@@ -20,18 +20,9 @@ idf_component_register(
 )
 
 # Include the index.html from this library if it is not customized by the project.
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/include.cmake)
 if (NOT CONFIG_NETLOGGING_CUSTOM_SSE_ASSETS)
     message (STATUS "Using built-in static assets for built-in HTTP SSE Logging Server")
     set (asset_src "${COMPONENT_DIR}/src/builtin_sse_server/www/index.html")
-    set (asset_dst_dir "${CMAKE_BINARY_DIR}/www")
-    set (asset_dst "${asset_dst_dir}/index.html.gz")
-    add_custom_command(
-        WORKING_DIRECTORY ${COMPONENT_DIR}
-        OUTPUT ${asset_dst}
-        COMMAND ${CMAKE_COMMAND} -E echo "Compressing static assets for built-in HTTP SSE Logging Server..."
-        COMMAND python tools/compress_assets.py --outdir=${asset_dst_dir} ${asset_src}
-        DEPENDS ${asset_src}
-    )
-    add_custom_target(builtin_sse_assets DEPENDS "${asset_dst}")
-    target_add_binary_data(${COMPONENT_LIB} "${asset_dst}" BINARY)
+    netlogging_add_asset(${COMPONENT_LIB} ${asset_src})
 endif()
