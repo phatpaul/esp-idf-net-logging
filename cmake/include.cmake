@@ -26,7 +26,7 @@ function(target_add_netlogging_asset target asset_src)
     set (asset_dst_dir "${CMAKE_BINARY_DIR}/www")
     set (asset_dst "${asset_dst_dir}/index.html.gz")
     add_custom_command(
-        WORKING_DIRECTORY ${COMPONENT_DIR}
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
         OUTPUT ${asset_dst}
         COMMAND ${CMAKE_COMMAND} -E echo "Compressing static assets for built-in HTTP SSE Logging Server..."
         COMMAND ${python} ${this_cmp_root_dir}/tools/compress_assets.py --outdir=${asset_dst_dir} ${asset_src}

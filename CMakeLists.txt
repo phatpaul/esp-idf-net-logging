@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.5)
 
+# The values of REQUIRES and PRIV_REQUIRES should not depend on any configuration choices (CONFIG_xxx macros).
+# This is because requirements are expanded before configuration is loaded. Other component variables (like include paths or source files) can depend on configuration choices.
+set(reqs
+    esp_ringbuf
+    # esp_http_client
+)
+
 set(component_srcs
     "src/net_logging.c"
     # "src/builtin_client/udp_client.c"
@@ -10,13 +17,12 @@ set(component_srcs
 )
 
 idf_component_register(
-    SRCS "${component_srcs}"
+    SRCS
+        "${component_srcs}"
     INCLUDE_DIRS
         "include"
     PRIV_REQUIRES
-        esp_http_client
-        esp_ringbuf
-        esp_hw_support
+        ${reqs}
 )
 
 # Include the index.html from this library if it is not customized by the project.
