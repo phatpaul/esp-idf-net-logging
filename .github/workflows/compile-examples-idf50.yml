@@ -21,6 +21,7 @@ on:
 jobs:
   build:
     strategy:
+      # Do not fail fast, so all examples are compiled even if one fails
       fail-fast: false
       
       # Define the test matrix 
@@ -29,6 +30,7 @@ jobs:
         EXAMPLE_PATH:
           - examples/basic
           - examples/sse_server
+          - examples/uart_select
 
 
     # Use the reusable workflow defined in workflow-compile-idf.yml
