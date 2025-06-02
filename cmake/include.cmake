@@ -23,6 +23,7 @@ endif()
 
 
 function(target_add_netlogging_asset target asset_src)
+    get_filename_component(asset_src "${asset_src}" ABSOLUTE)
     set (asset_dst_dir "${CMAKE_BINARY_DIR}/www")
     set (asset_dst "${asset_dst_dir}/index.html.gz")
     add_custom_command(

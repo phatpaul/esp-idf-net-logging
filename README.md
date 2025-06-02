@@ -29,7 +29,7 @@ See instructions in the [examples folder](./examples/)
 ### TODO: Some ideas for more logging methods
 - BLE (Bluetooth LE) Log Sender
   * This method could be useful for troubleshooting IP network issues, since BLE stack is completely separate from the TCP/IP stack.
-  * Will need a companion host app to recieve and save the logs. I.e. Android/iOS App (or an app on a PC that has a BLE adapter)
+  * Will need a companion host app to receive and save the logs. I.e. Android/iOS App (or an app on a PC that has a BLE adapter)
 - Local file logging.
   * option to save the logs to a local file (i.e. using VFS), so the logs are actually written to an internal filesystem such as FAT, SPIFFS, LittleFS, etc.
   * I.e. it could be stored on a SD card and the card removed to retrieve the file.
