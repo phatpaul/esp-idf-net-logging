@@ -1,0 +1,40 @@
+# This workflow compiles the basic example using ESP-IDF v4.4 for the esp32 chip.
+
+name: Examples Compile on ESP-IDF v4.4
+
+on:
+  # Trigger manually, or
+  workflow_dispatch:
+  # Trigger on pull requests and pushes 
+  pull_request:
+    # Only trigger for changes in specific paths
+    paths:
+      - ".github/workflows/**"
+      - "examples/**"
+      - "src/**"
+  push:
+    paths:
+      - ".github/workflows/**"
+      - "examples/**"
+      - "src/**"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      
+      # Define the test matrix 
+      # https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/running-variations-of-jobs-in-a-workflow
+      matrix:
+        EXAMPLE_PATH:
+          - examples/basic
+          - examples/sse_server
+
+
+    # Use the reusable workflow defined in workflow-compile-idf.yml
+    uses: ./.github/workflows/workflow-compile-idf.yml
+    with:
+      example_path: ${{ matrix.EXAMPLE_PATH }}
+      chip_target: esp32
+      idf_version: v4.4
+    

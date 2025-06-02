@@ -4,6 +4,7 @@ Redirect ESP-IDF logs to multiple sources.
 Forked from [nopnop2002/esp-idf-net-logging](https://github.com/nopnop2002/esp-idf-net-logging) and refactored to be more modular and robust.
 
 
+
 ### Motivation
 esp-idf has a Logging library.   
 The Logging library contains the ```esp_log_set_vprintf``` function.   
@@ -14,6 +15,13 @@ This component can be used to redirect log output to some other destination, suc
 
 ## Requirements
 - ESP-IDF V4.3 or later.   
+
+### Build Status
+Examples compile: 
+
+[![ESP-IDF 4.4](https://github.com/phatpaul/esp-idf-net-logging/actions/workflows/compile-examples-idf44.yml/badge.svg)](https://github.com/phatpaul/esp-idf-net-logging/actions/workflows/compile-examples-idf44.yml)
+
+[![ESP-IDF 5.0](https://github.com/phatpaul/esp-idf-net-logging/actions/workflows/compile-examples-idf50.yml/badge.svg)](https://github.com/phatpaul/esp-idf-net-logging/actions/workflows/compile-examples-idf50.yml)
  
 ## Build the example projects
 There are examples of several protocols for sending logs. 

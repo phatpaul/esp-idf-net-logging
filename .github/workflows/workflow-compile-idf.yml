@@ -1,0 +1,33 @@
+name: Reusable workflow for compiling examples with ESP-IDF
+on:
+  workflow_call:
+    inputs:
+      example_path:
+        description: 'Path to the example to compile'
+        required: true
+        type: string
+      chip_target:
+        description: 'Target chip (e.g., esp32, esp32s2)'
+        required: true
+        type: string
+      idf_version:
+        description: 'ESP-IDF version (e.g., v4.4, v5.0)'
+        required: true
+        type: string
+        
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      
+      - name: Compile example with ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: ${{ inputs.idf_version }}
+          target: ${{ inputs.chip_target }}
+          path: ${{ inputs.example_path }}
