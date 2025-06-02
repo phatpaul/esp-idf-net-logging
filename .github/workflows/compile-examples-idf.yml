@@ -26,9 +26,11 @@ jobs:
           - examples/basic
           - examples/sse_server
         CHIP_TARGET:
-          - esp32:esp32s2
+          - esp32
+          - esp32s2
         IDF_VERSION:
-          - v4.4:v5.0
+          - v4.4
+          - v5.0
         exclude:
           - CHIP_TARGET: esp32s2
             IDF_VERSION: v4.4
