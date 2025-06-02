@@ -35,7 +35,7 @@ struct server_handle_s
 {
     multicast_logging_param_t param;
     volatile bool task_run;
-    EventGroupHandle_t *state_event;      /*!< Task's state event group */
+    EventGroupHandle_t state_event;      /*!< Task's state event group */
 };
 static struct server_handle_s *server = NULL;
 

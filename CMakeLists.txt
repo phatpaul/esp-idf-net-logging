@@ -4,6 +4,9 @@ cmake_minimum_required(VERSION 3.5)
 # This is because requirements are expanded before configuration is loaded. Other component variables (like include paths or source files) can depend on configuration choices.
 set(reqs
     esp_ringbuf
+    esp_event
+    esp_netif
+    esp_wifi
     # esp_http_client
 )
 

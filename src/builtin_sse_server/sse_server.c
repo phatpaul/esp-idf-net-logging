@@ -5,7 +5,8 @@
 #include "net_logging.h"
 //#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE // set log level in this file only
 #include "esp_log.h"
-#include "esp_netif.h"
+#include "esp_netif_types.h" // for IP_EVENT
+#include "esp_wifi_types.h" // for WIFI_EVENT
 #include "esp_system.h"
 #include "esp_event.h"
 #include <stdio.h>
@@ -56,7 +57,7 @@ struct server_handle_s
     struct client_handle_s client[MAX_CLIENTS];
     volatile bool task_run;
     int start_count;
-    EventGroupHandle_t *state_event;      /*!< Task's state event group */
+    EventGroupHandle_t state_event;      /*!< Task's state event group */
 };
 static struct server_handle_s *server = NULL;
 #define STOPPED_BIT (1UL << 0) // bit to signal that task has stopped
