@@ -48,9 +48,9 @@ menu "Example Project Config"
 
         config EXAMPLE_USE_NETLOGGING_UDP
             bool "Use UDP Client to send logs"
-            default y
+            default n
             help
-                Use UDP Client to send logs.
+                Use UDP Client to send logs. (disabled until fixed!)
 
         if EXAMPLE_USE_NETLOGGING_UDP
 
@@ -70,9 +70,9 @@ menu "Example Project Config"
 
         config EXAMPLE_USE_NETLOGGING_TCP
             bool "Use TCP Client to send logs"
-            default y
+            default n 
             help
-                Use TCP Client to send logs.
+                Use TCP Client to send logs.  (disabled until fixed!)
 
         if EXAMPLE_USE_NETLOGGING_TCP
 
@@ -93,9 +93,9 @@ menu "Example Project Config"
 
         config EXAMPLE_USE_NETLOGGING_HTTP_CLIENT
             bool "Use HTTP Client to send logs"
-            default y
+            default n
             help
-                Use HTTP Client to send logs to an external HTTP server.
+                Use HTTP Client to send logs to an external HTTP server.  (disabled until fixed!)
 
         if EXAMPLE_USE_NETLOGGING_HTTP_CLIENT
 
