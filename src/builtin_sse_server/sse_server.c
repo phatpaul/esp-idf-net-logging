@@ -32,7 +32,7 @@
 #define INVALID_SOCK (-1) // Indicates that the file descriptor represents an invalid (uninitialized or closed) socket
 #define YIELD_TO_ALL_MS (50) // Time in ms to yield to all tasks when a non-blocking socket would block
 #define USE_GZIP_ASSETS (1) // Use gzip compression for index.html
-
+#define TASK_STACK_SIZE (1024 * 4) // Stack size for the SSE logging server task
 
 #define TAG "sse_log_sender"
 
@@ -501,7 +501,7 @@ esp_err_t netlogging_sse_server_run(void)
     // Start Multicast Sender task
     server->task_run = true;
     server->start_count = 0;
-    if( xTaskCreate(server_task, "HTTP SSE", 1024 * 6, NULL, 2, NULL) != pdPASS) {
+    if( xTaskCreate(server_task, "net_logging", TASK_STACK_SIZE, NULL, 2, NULL) != pdPASS) {
         NETLOGGING_LOGE("xTaskCreate failed");
         server->task_run = false;
         return ESP_FAIL;

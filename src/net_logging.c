@@ -12,8 +12,9 @@
 
 #define TAG "net_logging: "
 
+#define MAX_LOG_BUFFERS 6
 SemaphoreHandle_t logBuffersMutex;
-void *logBuffers[6] = {};
+void *logBuffers[MAX_LOG_BUFFERS] = {};
 bool writeToStdout;
 vprintf_like_t old_vprintf = NULL;
 
@@ -33,7 +34,7 @@ static int logging_vprintf(const char *fmt, va_list l) {
         if (xSemaphoreTake(logBuffersMutex, portMAX_DELAY) == pdTRUE) {
 #if CONFIG_NETLOGGING_USE_RINGBUFFER
             // Send to RingBuffers
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < MAX_LOG_BUFFERS; i++) {
                 if (logBuffers[i] != NULL) {
                     BaseType_t sent = xRingbufferSendFromISR(logBuffers[i], buffer, cstr_len, &xHigherPriorityTaskWoken);
                     //assert(sended == pdTRUE); -- don't die if buffer overflows
@@ -42,7 +43,7 @@ static int logging_vprintf(const char *fmt, va_list l) {
             }
 #else
             // Send to MessageBuffers
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < MAX_LOG_BUFFERS; i++) {
                 if (logBuffers[i] != NULL) {
                     BaseType_t sent = xMessageBufferSendFromISR(logBuffers[i], buffer, cstr_len, &xHigherPriorityTaskWoken);
                     //assert(sended == pdTRUE); -- don't die if buffer overflows
@@ -83,7 +84,7 @@ esp_err_t netlogging_register_recieveBuffer(void *buffer)
     esp_err_t ret = ESP_ERR_NO_MEM;
     if (xSemaphoreTake(logBuffersMutex, portMAX_DELAY) == pdTRUE) {
         // search for empty slot
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < MAX_LOG_BUFFERS; i++) {
             if (logBuffers[i] == NULL) {
                 logBuffers[i] = buffer;
                 ret = ESP_OK;
@@ -110,7 +111,7 @@ esp_err_t netlogging_unregister_recieveBuffer(void *buffer)
     esp_err_t ret = ESP_ERR_NOT_FOUND;
     if (xSemaphoreTake(logBuffersMutex, portMAX_DELAY) == pdTRUE) {
         // search for buffer by pointer
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < MAX_LOG_BUFFERS; i++) {
             if (logBuffers[i] == buffer) {
                 logBuffers[i] = NULL;
                 ret = ESP_OK;
@@ -135,7 +136,7 @@ esp_err_t netlogging_init(bool enableStdout) {
         return ESP_ERR_NO_MEM;
     }
     // Initialize the log buffers to NULL
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < MAX_LOG_BUFFERS; i++) {
         logBuffers[i] = NULL;
     }
     // Set function used to output log entries to our custom one.
@@ -144,8 +145,8 @@ esp_err_t netlogging_init(bool enableStdout) {
 }
 
 /**
- * @brief Deinitialize the netlogging component. 
- * This should be called when the component is no longer needed to free up resources. 
+ * @brief Deinitialize the netlogging component.
+ * This should be called when the component is no longer needed to free up resources.
  * Make sure to unregister all buffers before calling this function.
  * @return ESP_OK on success.
  */
